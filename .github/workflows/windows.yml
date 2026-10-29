@@ -1,0 +1,49 @@
+name: Build Windows Plugin
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure CMake
+        run: |
+          cmake -B build `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DJUCE_BUILD_EXAMPLES=OFF `
+            -DJUCE_BUILD_EXTRAS=OFF `
+            -DJUCE_BUILD_TESTING=OFF
+
+      - name: Build VST3
+        run: |
+          cmake --build build --config Release --target Vespera_VST3
+
+      - name: Package VST3
+        id: package
+        run: |
+          $out = "build/Vespera.vst3"
+          # JUCE 8 artefact path: build/*_artefacts/Release/VST3/Vespera.vst3
+          $vst3 = Get-ChildItem -Recurse -Directory -Path build -Filter "Vespera.vst3" | Select-Object -First 1
+          if (-not $vst3) {
+            Write-Error "VST3 bundle not found"
+            exit 1
+          }
+          Copy-Item -Recurse $vst3.FullName $out
+          Write-Output "path=$out" >> $env:GITHUB_OUTPUT
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vespera-VST3-Windows-x64
+          path: ${{ steps.package.outputs.path }}

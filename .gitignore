@@ -1,6 +1,9 @@
 # Build tree (CMake + JUCE FetchContent + artefacts)
 build/
 
+# Local toolchain venv (cmake / ninja)
+.tools/
+
 # macOS
 .DS_Store
 
