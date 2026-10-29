@@ -1,0 +1,10 @@
+# Build tree (CMake + JUCE FetchContent + artefacts)
+build/
+
+# macOS
+.DS_Store
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp

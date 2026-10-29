@@ -1,0 +1,913 @@
+#include "PluginProcessor.h"
+#include "PluginEditor.h"
+
+//==============================================================================
+namespace
+{
+    using APVTS = juce::AudioProcessorValueTreeState;
+
+    float peakMagnitude (const juce::AudioBuffer<float>& b, int numSamples) noexcept
+    {
+        float p = 0.0f;
+        const int chans = juce::jmin (2, b.getNumChannels());
+        for (int ch = 0; ch < chans; ++ch)
+        {
+            const float* d = b.getReadPointer (ch);
+            for (int n = 0; n < numSamples; ++n)
+                p = juce::jmax (p, std::abs (d[n]));
+        }
+        return p;
+    }
+}
+
+//==============================================================================
+VesperaAudioProcessor::VesperaAudioProcessor()
+    : AudioProcessor (BusesProperties()
+                        .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+      apvts (*this, nullptr, "PARAMETERS", createParameterLayout())
+{
+    bindRawParams();
+}
+
+VesperaAudioProcessor::~VesperaAudioProcessor() = default;
+
+//==============================================================================
+void VesperaAudioProcessor::bindRawParams()
+{
+    using namespace vespera;
+    auto bind = [this] (const char* id) { return apvts.getRawParameterValue (id); };
+
+    rawParams.key      = bind (ids::key);
+    rawParams.scale    = bind (ids::scale);
+    rawParams.poolSize = bind (ids::poolSize);
+    rawParams.latch    = bind (ids::latch);
+    rawParams.monitor  = bind (ids::monitor);
+    rawParams.keyLock  = bind (ids::keyLock);
+
+    rawParams.rate    = bind (ids::rate);
+    rawParams.steps   = bind (ids::steps);
+    rawParams.density = bind (ids::density);
+    rawParams.octaves = bind (ids::octaves);
+    rawParams.contour = bind (ids::contour);
+    rawParams.mutate  = bind (ids::mutate);
+    rawParams.swing   = bind (ids::swing);
+    rawParams.gate    = bind (ids::gate);
+    rawParams.accent  = bind (ids::accent);
+    rawParams.transpose = bind (ids::transpose);
+
+    rawParams.wave    = bind (ids::wave);
+    rawParams.attack  = bind (ids::attack);
+    rawParams.decay   = bind (ids::decay);
+    rawParams.sustain = bind (ids::sustain);
+    rawParams.release = bind (ids::release);
+    rawParams.detune  = bind (ids::detune);
+
+    rawParams.filterType   = bind (ids::filterType);
+    rawParams.filterCutoff = bind (ids::filterCutoff);
+    rawParams.filterReso   = bind (ids::filterReso);
+    rawParams.filterEnv    = bind (ids::filterEnv);
+    rawParams.lfoRate      = bind (ids::lfoRate);
+    rawParams.lfoRateHz    = bind (ids::lfoRateHz);
+    rawParams.lfoSync      = bind (ids::lfoSync);
+    rawParams.lfoShape     = bind (ids::lfoShape);
+    rawParams.motion       = bind (ids::motion);
+
+    rawParams.drive = bind (ids::drive);
+    rawParams.crush = bind (ids::crush);
+    rawParams.noise = bind (ids::noise);
+    rawParams.wow   = bind (ids::wow);
+    rawParams.fold  = bind (ids::fold);
+    rawParams.ring  = bind (ids::ring);
+
+    rawParams.output  = bind (ids::output);
+    rawParams.limiter = bind (ids::limiter);
+}
+
+//==============================================================================
+APVTS::ParameterLayout VesperaAudioProcessor::createParameterLayout()
+{
+    using namespace vespera;
+    std::vector<std::unique_ptr<juce::RangedAudioParameter>> params;
+
+    auto addFloat = [&params] (const char* id, const juce::String& name,
+                               float min, float max, float def,
+                               const juce::String& suffix, int decimals,
+                               float skewCentre = 0.0f)
+    {
+        juce::NormalisableRange<float> range (min, max);
+        if (skewCentre > 0.0f)
+            range.setSkewForCentre (skewCentre);
+
+        auto attrs = juce::AudioParameterFloatAttributes()
+                         .withLabel (suffix)
+                         .withStringFromValueFunction ([decimals] (float v, int)
+                         {
+                             auto s = juce::String (v, decimals);
+                             if (s.containsChar ('.'))
+                             {
+                                 s = s.trimCharactersAtEnd ("0");
+                                 s = s.trimCharactersAtEnd (".");
+                             }
+                             return s;
+                         });
+
+        params.push_back (std::make_unique<juce::AudioParameterFloat> (
+            id, name, range, def, attrs));
+    };
+
+    auto addInt = [&params] (const char* id, const juce::String& name,
+                             int min, int max, int def)
+    {
+        params.push_back (std::make_unique<juce::AudioParameterInt> (
+            id, name, min, max, def));
+    };
+
+    auto addBool = [&params] (const char* id, const juce::String& name, bool def)
+    {
+        params.push_back (std::make_unique<juce::AudioParameterBool> (id, name, def));
+    };
+
+    auto addChoice = [&params] (const char* id, const juce::String& name,
+                                const juce::StringArray& choices, int def)
+    {
+        params.push_back (std::make_unique<juce::AudioParameterChoice> (id, name, choices, def));
+    };
+
+    // --- Notes ---------------------------------------------------------------
+    addChoice (ids::key,   "Key",   Scale::getKeyNames(), 0);
+    addChoice (ids::scale, "Scale", Scale::getNames(), 1);
+    addInt    (ids::poolSize, "Pool", 1, 8, 4);
+    addBool   (ids::latch,   "Latch",   false);
+    addBool   (ids::monitor, "Monitor", false);
+    addBool   (ids::keyLock, "Lock Key", false);
+
+    // --- Pattern -------------------------------------------------------------
+    addChoice (ids::rate,    "Rate", { "1/1", "1/2", "1/4", "1/8", "1/16", "1/32" }, 4);
+    addInt    (ids::steps,   "Steps", 2, 16, 8);
+    addFloat  (ids::density, "Density", 0.0f, 1.0f, 0.7f, "", 2);
+    addInt    (ids::octaves, "Octaves", 1, 3, 2);
+    addChoice (ids::contour, "Contour", { "Up", "Down", "Up-Down", "Random", "Walk", "Reverse" }, 2);
+    addFloat  (ids::mutate,  "Mutate", 0.0f, 1.0f, 0.0f, "", 2);
+    addFloat  (ids::swing,   "Swing",  0.0f, 1.0f, 0.0f, "", 2);
+    addFloat  (ids::gate,    "Gate",   0.05f, 1.0f, 0.5f, "", 2);
+    addFloat  (ids::accent,  "Accent", 0.0f, 1.0f, 0.3f, "", 2);
+
+    {
+        auto attrs = juce::AudioParameterIntAttributes()
+                         .withStringFromValueFunction ([] (int v, int)
+                         {
+                             return (v > 0 ? "+" : "") + juce::String (v);
+                         });
+
+        params.push_back (std::make_unique<juce::AudioParameterInt> (
+            ids::transpose, "Transpose", -7, 7, 0, attrs));
+    }
+
+    // --- Voice ---------------------------------------------------------------
+    addChoice (ids::wave,    "Wave", { "Sine", "Triangle", "Saw", "Square" }, 1);
+    addFloat  (ids::attack,  "Attack",  0.001f, 4.0f, 0.005f, "s", 3, 0.05f);
+    addFloat  (ids::decay,   "Decay",   0.001f, 4.0f, 0.25f, "s", 3, 0.3f);
+    addFloat  (ids::sustain, "Sustain", 0.0f, 1.0f, 0.6f, "", 2);
+    addFloat  (ids::release, "Release", 0.01f, 8.0f, 0.4f, "s", 3, 0.5f);
+    addFloat  (ids::detune,  "Detune",  0.0f, 1.0f, 0.15f, "", 2);
+
+    // --- Filter --------------------------------------------------------------
+    addChoice (ids::filterType,   "Filter", { "Off", "LP", "BP", "HP" }, 1);
+    addFloat  (ids::filterCutoff, "Cutoff", 30.0f, 18000.0f, 8000.0f, "Hz", 0, 1200.0f);
+    addFloat  (ids::filterReso,   "Reso",   0.0f, 1.0f, 0.15f, "", 2);
+    addFloat  (ids::filterEnv,    "Env",    0.0f, 1.0f, 0.2f, "", 2);
+    addChoice (ids::lfoShape,     "LFO Shape", Lfo::getNames(), 0);
+    addBool   (ids::lfoSync,      "LFO Sync",  false);
+    addChoice (ids::lfoRate,      "Division",  { "4/1", "2/1", "1/1", "1/2",
+                                                 "1/4", "1/8", "1/16", "1/32" }, 2);
+    addFloat  (ids::lfoRateHz,    "Rate", 0.02f, 20.0f, 1.0f, "Hz", 2, 1.0f);
+    addFloat  (ids::motion,       "Motion", 0.0f, 1.0f, 0.1f, "", 2);
+
+    // --- Character -----------------------------------------------------------
+    addFloat (ids::drive, "Drive", 0.0f, 1.0f, 0.0f, "", 2);
+    addFloat (ids::crush, "Crush", 0.0f, 1.0f, 0.0f, "", 2);
+    addFloat (ids::noise, "Noise", 0.0f, 1.0f, 0.0f, "", 2);
+    addFloat (ids::wow,   "Wow",   0.0f, 1.0f, 0.0f, "", 2);
+    addFloat (ids::fold,  "Fold",  0.0f, 1.0f, 0.0f, "", 2);
+    addFloat (ids::ring,  "Ring",  0.0f, 1.0f, 0.0f, "", 2);
+
+    // --- Output --------------------------------------------------------------
+    addFloat (ids::output, "Output", -24.0f, 12.0f, 0.0f, "dB", 1);
+    addBool  (ids::limiter, "Limiter", true);
+
+    return { params.begin(), params.end() };
+}
+
+//==============================================================================
+double VesperaAudioProcessor::rateInBeats (int rateIndex)
+{
+    static constexpr double beats[] = { 4.0, 2.0, 1.0, 0.5, 0.25, 0.125 };
+    return beats[juce::jlimit (0, 5, rateIndex)];
+}
+
+double VesperaAudioProcessor::lfoRateInBeats (int rateIndex)
+{
+    static constexpr double beats[] = { 16.0, 8.0, 4.0, 2.0, 1.0, 0.5, 0.25, 0.125 };
+    return beats[juce::jlimit (0, 7, rateIndex)];
+}
+
+//==============================================================================
+void VesperaAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
+{
+    currentSampleRate = sampleRate;
+
+    setLatencySamples (0);
+
+    synth.prepare (sampleRate);
+    filter.prepare (sampleRate);
+    character.prepare (sampleRate);
+    outputLimiter.prepare (sampleRate);
+
+    outBuffer.setSize (2, samplesPerBlock, false, false, true);
+
+    notePool.reset();
+    pattern.reset();
+    currentStep = 0;
+    samplesToNextStep = 0.0;
+    patternDirty = true;
+    lastKey = -1;
+    lastScale = -1;
+    lastPoolSizeParam = -1;
+    lastDensity = -1.0f;
+    lastOctaves = -1;
+    lastContour = -1;
+    lastAccent = -1.0f;
+    pendingSeed.store (-1, std::memory_order_relaxed);
+    pendingPoolClear.store (false, std::memory_order_relaxed);
+
+    {
+        const juce::SpinLock::ScopedLockType lock (viewLock);
+        view = {};
+        view.steps = pattern.getLength();
+    }
+
+    outputSmoothed.reset (sampleRate, 0.02);
+    outputSmoothed.setCurrentAndTargetValue (
+        juce::Decibels::decibelsToGain (rawParams.output->load()));
+
+    lfoPhase = 0.0;
+    lfo.reset();
+    logTimeSec = 0.0;
+    debugLogger.start();
+}
+
+void VesperaAudioProcessor::releaseResources()
+{
+    debugLogger.stop();
+}
+
+bool VesperaAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
+{
+    if (! layouts.getMainInputChannelSet().isDisabled())
+        return false;
+
+    const auto& out = layouts.getMainOutputChannelSet();
+    return out == juce::AudioChannelSet::mono() || out == juce::AudioChannelSet::stereo();
+}
+
+//==============================================================================
+void VesperaAudioProcessor::seedPool (int rootNote)
+{
+    const int scaleIndex = (int) rawParams.scale->load();
+    const int key = (int) rawParams.key->load();
+    const int poolSize = (int) rawParams.poolSize->load();
+
+    const auto& intervals = vespera::Scale::getIntervals (scaleIndex);
+    static constexpr int degrees[] = { 0, 2, 4, 6, 8 };
+
+    const bool wasLatched = notePool.isLatched();
+    notePool.setLatch (false);
+    notePool.reset();
+
+    for (int d : degrees)
+    {
+        if (d < (int) intervals.size())
+        {
+            const int note = vespera::Scale::quantize (rootNote + intervals[(size_t) d],
+                                                       key, scaleIndex);
+            notePool.add (note, poolSize);
+        }
+    }
+
+    notePool.setLatch (wasLatched);
+
+    patternDirty = true;
+}
+
+//==============================================================================
+double VesperaAudioProcessor::triggerStep (double samplesPerStep, float gate, float swing)
+{
+    using namespace vespera;
+
+    PatternParams pp;
+    pp.steps   = (int) rawParams.steps->load();
+    pp.density = rawParams.density->load();
+    pp.octaves = (int) rawParams.octaves->load();
+    pp.contour = (int) rawParams.contour->load();
+    pp.mutate  = rawParams.mutate->load();
+    pp.gate    = gate;
+    pp.swing   = swing;
+    pp.accent  = rawParams.accent->load();
+
+    int poolNotes[NotePool::kMaxNotes] {};
+    const int poolSize = (int) rawParams.poolSize->load();
+    const int n = notePool.getSorted (poolNotes, poolSize);
+
+    // Rebuild the pattern immediately when a generator control moves, so the
+    // knobs feel live instead of waiting for the next mutation cycle.
+    if (std::abs (pp.density - lastDensity) > 1.0e-6f
+        || pp.octaves != lastOctaves
+        || pp.contour != lastContour
+        || std::abs (pp.accent - lastAccent) > 1.0e-6f
+        || poolSize   != lastPoolSizeParam)
+    {
+        lastDensity = pp.density;
+        lastOctaves = pp.octaves;
+        lastContour = pp.contour;
+        lastAccent = pp.accent;
+        lastPoolSizeParam = poolSize;
+        patternDirty = true;
+    }
+
+    if (patternDirty || pattern.getLength() != pp.steps)
+    {
+        pattern.regenerate (n, pp, rng);
+        patternDirty = false;
+        if (currentStep >= pattern.getLength())
+            currentStep = 0;
+    }
+
+    const int triggeredStep = currentStep;
+    const int transpose = (int) rawParams.transpose->load();
+    const int key = (int) rawParams.key->load();
+    const int scale = (int) rawParams.scale->load();
+
+    if (n > 0)
+    {
+        const auto& step = pattern.getStep (triggeredStep);
+        if (step.active)
+        {
+            const int baseNote = poolNotes[juce::jlimit (0, n - 1, step.poolIndex)]
+                                     + 12 * step.octave;
+            const int note = juce::jlimit (0, 127,
+                                           Scale::transposeDegrees (baseNote, transpose, key, scale));
+            const int duration = juce::jmax (1, (int) (samplesPerStep * gate));
+            synth.noteOnTimed (note, step.velocity, duration);
+        }
+    }
+
+    updatePatternView (poolNotes, n);
+
+    currentStep = (currentStep + 1) % pattern.getLength();
+
+    if (currentStep == 0 && pp.mutate > 0.001f)
+        pattern.mutate (n, pp, rng);
+
+    const double factor = (triggeredStep % 2 == 1) ? (1.0 + swing * 0.5)
+                                                   : (1.0 - swing * 0.5);
+    return juce::jmax (1.0, samplesPerStep * factor);
+}
+
+//==============================================================================
+void VesperaAudioProcessor::updatePatternView (const int* poolNotes, int poolSize)
+{
+    vespera::PatternView v;
+    v.steps = pattern.getLength();
+    v.currentStep = currentStep;
+    v.poolSize = juce::jlimit (0, vespera::NotePool::kMaxNotes, poolSize);
+    v.key = (int) rawParams.key->load();
+    v.scale = (int) rawParams.scale->load();
+    v.transpose = (int) rawParams.transpose->load();
+    v.density = rawParams.density->load();
+    v.mutate = rawParams.mutate->load();
+
+    const int key = (int) rawParams.key->load();
+    const int scale = (int) rawParams.scale->load();
+    for (int i = 0; i < vespera::NotePool::kMaxNotes; ++i)
+        v.poolNotes[i] = (i < v.poolSize) ? poolNotes[i] : 0;
+
+    for (int i = 0; i < vespera::PatternEngine::kMaxSteps; ++i)
+    {
+        const auto& s = pattern.getStep (i);
+        v.active[i] = (i < v.steps) && s.active;
+        v.velocity[i] = s.velocity;
+        v.note[i] = (v.active[i] && v.poolSize > 0)
+                        ? juce::jlimit (0, 127,
+                                        vespera::Scale::transposeDegrees (
+                                            poolNotes[juce::jlimit (0, v.poolSize - 1, s.poolIndex)]
+                                                + 12 * s.octave,
+                                            v.transpose, key, scale))
+                        : -1;
+    }
+
+    const juce::SpinLock::ScopedLockType lock (viewLock);
+    view = v;
+}
+
+bool VesperaAudioProcessor::getPatternView (vespera::PatternView& out) const
+{
+    const juce::SpinLock::ScopedTryLockType lock (viewLock);
+    if (! lock.isLocked())
+        return false;
+
+    out = view;
+    return true;
+}
+
+//==============================================================================
+void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+{
+    juce::ScopedNoDenormals noDenormals;
+
+    const int numSamples = buffer.getNumSamples();
+    const int numCh = buffer.getNumChannels();
+
+    if (numSamples == 0)
+        return;
+
+    using namespace vespera;
+    auto& rp = rawParams;
+
+    // --- transport -----------------------------------------------------------
+    double bpm = currentBpm;
+    if (auto* ph = getPlayHead())
+        if (auto pos = ph->getPosition())
+            if (auto hostBpm = pos->getBpm())
+                bpm = *hostBpm;
+
+    currentBpm = juce::jlimit (20.0, 300.0, bpm);
+    displayBpm.store ((float) currentBpm, std::memory_order_relaxed);
+
+    // --- parameter snapshots -------------------------------------------------
+    const int keyIndex   = (int) rp.key->load();
+    const int scaleIndex = (int) rp.scale->load();
+    const int poolSize   = (int) rp.poolSize->load();
+    const bool latchOn   = rp.latch->load() > 0.5f;
+    const bool monitorOn = rp.monitor->load() > 0.5f;
+
+    notePool.setLatch (latchOn);
+
+    // A RANDOM press can seed the pool from the message thread.
+    if (const int seed = pendingSeed.exchange (-1, std::memory_order_relaxed); seed >= 0)
+        seedPool (seed);
+
+    // The UI clear button empties the pool on the audio thread.
+    if (pendingPoolClear.exchange (false, std::memory_order_relaxed))
+    {
+        notePool.reset();
+        pattern.reset();
+        currentStep = 0;
+        patternDirty = true;
+        updatePatternView (nullptr, 0);
+    }
+
+    // --- MIDI input ----------------------------------------------------------
+    bool poolChanged = false;
+
+    // Changing the key or scale re-quantises the notes already in the pool so
+    // the generator never keeps playing pitches from the previous scale.
+    if (keyIndex != lastKey || scaleIndex != lastScale)
+    {
+        int notes[NotePool::kMaxNotes] {};
+        const int n = notePool.getSorted (notes, poolSize);
+
+        const bool wasLatched = notePool.isLatched();
+        notePool.setLatch (false);
+        notePool.reset();
+
+        for (int i = 0; i < n; ++i)
+            notePool.add (Scale::quantize (notes[i], keyIndex, scaleIndex), poolSize);
+
+        notePool.setLatch (wasLatched);
+
+        lastKey = keyIndex;
+        lastScale = scaleIndex;
+        patternDirty = true;
+        poolChanged = true;
+    }
+
+    for (const auto metadata : midi)
+    {
+        const auto msg = metadata.getMessage();
+
+        if (msg.isNoteOn())
+        {
+            const int note = Scale::quantize (msg.getNoteNumber(), keyIndex, scaleIndex);
+            if (notePool.add (note, poolSize))
+                poolChanged = true;
+
+            if (monitorOn)
+                synth.noteOn (note, msg.getFloatVelocity());
+        }
+        else if (msg.isNoteOff())
+        {
+            const int note = Scale::quantize (msg.getNoteNumber(), keyIndex, scaleIndex);
+            synth.noteOff (note);
+        }
+        else if (msg.isAllNotesOff() || msg.isAllSoundOff())
+        {
+            synth.allNotesOff();
+        }
+    }
+
+    if (poolChanged)
+    {
+        patternDirty = true;
+        int notes[NotePool::kMaxNotes] {};
+        const int n = notePool.getSorted (notes, poolSize);
+        updatePatternView (notes, n);
+    }
+
+    // --- synth + pattern -----------------------------------------------------
+    outBuffer.setSize (2, numSamples, false, false, true);
+    outBuffer.clear();
+
+    synth.setParams ((int) rp.wave->load(), rp.attack->load(), rp.decay->load(),
+                     rp.sustain->load(), rp.release->load(), rp.detune->load());
+
+    const double stepBeats = rateInBeats ((int) rp.rate->load());
+    const double samplesPerStep = juce::jmax (1.0, (60.0 / currentBpm)
+                                                     * currentSampleRate * stepBeats);
+    const float gate = rp.gate->load();
+    const float swing = rp.swing->load();
+
+    int pos = 0;
+    while (pos < numSamples)
+    {
+        if (samplesToNextStep <= 0.0)
+            samplesToNextStep += triggerStep (samplesPerStep, gate, swing);
+
+        int chunk = numSamples - pos;
+        const int untilStep = (int) std::ceil (juce::jmax (0.0, samplesToNextStep));
+        if (untilStep > 0)
+            chunk = juce::jmin (chunk, untilStep);
+        chunk = juce::jmax (1, chunk);
+
+        synth.render (outBuffer.getWritePointer (0) + pos,
+                      outBuffer.getWritePointer (1) + pos, chunk);
+
+        pos += chunk;
+        samplesToNextStep -= (double) chunk;
+    }
+
+    displayVoices.store (synth.getActiveVoiceCount(), std::memory_order_relaxed);
+
+    const float synthPeak = peakMagnitude (outBuffer, numSamples);
+
+    // --- resonant filter -----------------------------------------------------
+    // The LFO can run free (Hz) or locked to the host tempo (1/1 .. 1/32), and
+    // its shape can be a sine, a ramp, a square or a random source.
+    const bool lfoSynced = rp.lfoSync->load() > 0.5f;
+    double lfoHz = (double) rp.lfoRateHz->load();
+
+    if (lfoSynced)
+    {
+        const double lfoBeats = lfoRateInBeats ((int) rp.lfoRate->load());
+        lfoHz = 1.0 / (lfoBeats * 60.0 / currentBpm);
+    }
+
+    lfoHz = juce::jlimit (0.01, 40.0, lfoHz);
+
+    const float lfoValue = lfo.advance (lfoHz * (double) numSamples / currentSampleRate,
+                                        (int) rp.lfoShape->load(), rng);
+    const float lfoOctaves = rp.motion->load() * 2.0f * lfoValue;
+
+    filter.process (outBuffer.getWritePointer (0), outBuffer.getWritePointer (1),
+                    numSamples, (int) rp.filterType->load(), rp.filterCutoff->load(),
+                    rp.filterReso->load(), rp.filterEnv->load(), lfoOctaves);
+
+    // --- character -----------------------------------------------------------
+    CharacterParams cp;
+    cp.drive = rp.drive->load();
+    cp.crush = rp.crush->load();
+    cp.noise = rp.noise->load();
+    cp.wow   = rp.wow->load();
+    cp.fold  = rp.fold->load();
+    cp.ring  = rp.ring->load();
+
+    character.process (outBuffer.getWritePointer (0), outBuffer.getWritePointer (1),
+                       numSamples, cp);
+
+    const float charPeak = peakMagnitude (outBuffer, numSamples);
+
+    // --- output level --------------------------------------------------------
+    outputSmoothed.setTargetValue (juce::Decibels::decibelsToGain (rp.output->load()));
+    {
+        float* oL = outBuffer.getWritePointer (0);
+        float* oR = outBuffer.getWritePointer (1);
+        for (int n = 0; n < numSamples; ++n)
+        {
+            const float g = outputSmoothed.getNextValue();
+            oL[n] *= g;
+            oR[n] *= g;
+        }
+    }
+
+    // --- output stage: an optional final peak limiter ------------------------
+    // With Limiter off the stage is bypassed; the safety clamp below still keeps
+    // the output bounded.  With it on it is the last musical stage and holds the
+    // signal just under full scale (soft ceiling for the attack overshoot).
+    const bool limiterOn = rp.limiter->load() > 0.5f;
+    float grDb = 0.0f;
+
+    if (limiterOn)
+    {
+        outputLimiter.process (outBuffer.getWritePointer (0), outBuffer.getWritePointer (1),
+                               numSamples, 0.98f);
+        grDb = outputLimiter.getGainReductionDb();
+    }
+    else
+    {
+        outputLimiter.reset();
+    }
+
+    // --- final safety: finite AND bounded ------------------------------------
+    // The limiter (when enabled) already keeps the output within +/-1.0.  This
+    // last stage catches anything else: non-finite values are zeroed, while a
+    // finite over-range sample (e.g. with the limiter bypassed) is clamped to
+    // +/-1.0 rather than zeroed, so it degrades gracefully instead of gating.
+    constexpr float kSafetyCeil = 1.0f;
+    float rawOutPeak = 0.0f;
+    float outPeak    = 0.0f;
+    bool  bad        = false;
+    {
+        float* oL = outBuffer.getWritePointer (0);
+        float* oR = outBuffer.getWritePointer (1);
+        auto sanitise = [&] (float& s)
+        {
+            if (! std::isfinite (s))
+            {
+                bad = true;
+                s = 0.0f;
+            }
+            else
+            {
+                rawOutPeak = juce::jmax (rawOutPeak, std::abs (s));
+                s = juce::jlimit (-kSafetyCeil, kSafetyCeil, s);
+            }
+            outPeak = juce::jmax (outPeak, std::abs (s));
+        };
+        for (int n = 0; n < numSamples; ++n)
+        {
+            sanitise (oL[n]);
+            sanitise (oR[n]);
+        }
+    }
+
+    const bool runaway = bad || charPeak > 32.0f;
+
+    // --- black box -----------------------------------------------------------
+    {
+        BlockSnapshot snap;
+        snap.timeSec    = logTimeSec;
+        snap.inPeak     = synthPeak;
+        snap.charPeak   = charPeak;
+        snap.outPeak    = outPeak;
+
+        snap.key = keyIndex;
+        snap.scale = scaleIndex;
+        snap.poolSize = poolSize;
+        snap.steps = (int) rp.steps->load();
+        snap.density = rp.density->load();
+        snap.octaves = (int) rp.octaves->load();
+        snap.contour = (int) rp.contour->load();
+        snap.mutate = rp.mutate->load();
+        snap.swing = rp.swing->load();
+        snap.gate = rp.gate->load();
+        snap.accent = rp.accent->load();
+        snap.transpose = (int) rp.transpose->load();
+
+        snap.wave = (int) rp.wave->load();
+        snap.attack = rp.attack->load();
+        snap.decay = rp.decay->load();
+        snap.sustain = rp.sustain->load();
+        snap.release = rp.release->load();
+        snap.detune = rp.detune->load();
+
+        snap.filterType = (int) rp.filterType->load();
+        snap.filterCutoff = rp.filterCutoff->load();
+        snap.filterReso = rp.filterReso->load();
+        snap.filterEnv = rp.filterEnv->load();
+        snap.lfoRate = (float) lfoHz;
+        snap.lfoShape = (int) rp.lfoShape->load();
+        snap.lfoSynced = lfoSynced;
+        snap.motion = rp.motion->load();
+
+        snap.drive = cp.drive;
+        snap.crush = cp.crush;
+        snap.noise = cp.noise;
+        snap.wow = cp.wow;
+        snap.fold = cp.fold;
+        snap.ring = cp.ring;
+
+        snap.output = rp.output->load();
+        snap.limiterOn = limiterOn;
+        snap.grDb = grDb;
+        snap.bpm = (float) currentBpm;
+        snap.activeVoices = synth.getActiveVoiceCount();
+        snap.currentStep = currentStep;
+
+        snap.latchOn = latchOn;
+        snap.monitorOn = monitorOn;
+        snap.keyLockOn = rp.keyLock->load() > 0.5f;
+
+        if (bad)                    snap.flags |= kFlagNonFinite;
+        if (synthPeak > 2.0f)       snap.flags |= kFlagInputHot;
+        if (rawOutPeak > 1.0f)      snap.flags |= kFlagOutHot;
+        if (grDb > 12.0f)           snap.flags |= kFlagHeavyGR;
+
+        debugLogger.push (snap);
+    }
+
+    logTimeSec += (double) numSamples / currentSampleRate;
+
+    if (runaway)
+    {
+        outBuffer.clear();
+        synth.reset();
+        filter.reset();
+        character.reset();
+    }
+
+    // --- fold back into the host buffer --------------------------------------
+    if (numCh >= 2)
+    {
+        buffer.copyFrom (0, 0, outBuffer, 0, 0, numSamples);
+        buffer.copyFrom (1, 0, outBuffer, 1, 0, numSamples);
+    }
+    else if (numCh == 1)
+    {
+        for (int n = 0; n < numSamples; ++n)
+            buffer.setSample (0, n, (outBuffer.getSample (0, n) + outBuffer.getSample (1, n)) * 0.5f);
+    }
+}
+
+//==============================================================================
+juce::AudioProcessorEditor* VesperaAudioProcessor::createEditor()
+{
+    return new VesperaAudioProcessorEditor (*this);
+}
+
+//==============================================================================
+void VesperaAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
+{
+    if (auto xml = apvts.copyState().createXml())
+        copyXmlToBinary (*xml, destData);
+}
+
+void VesperaAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
+{
+    if (auto xml = getXmlFromBinary (data, sizeInBytes))
+        if (xml->hasTagName (apvts.state.getType()))
+        {
+            apvts.replaceState (juce::ValueTree::fromXml (*xml));
+            stateRestored.store (true, std::memory_order_relaxed);
+        }
+}
+
+//==============================================================================
+void VesperaAudioProcessor::randomizeParameters()
+{
+    using namespace vespera;
+    auto& random = juce::Random::getSystemRandom();
+
+    auto setReal = [this] (const char* id, float realValue)
+    {
+        if (auto* p = apvts.getParameter (id))
+            p->setValueNotifyingHost (p->convertTo0to1 (realValue));
+    };
+
+    auto pick = [&random] (std::initializer_list<float> options)
+    {
+        const int n = (int) options.size();
+        const int idx = random.nextInt (juce::jmax (1, n));
+        return *(options.begin() + juce::jlimit (0, n - 1, idx));
+    };
+
+    // Notes.  With KEY LOCK engaged the tonic and the scale are kept, so RANDOM
+    // only reshapes the pattern and the sound.
+    const bool keyLocked = rawParams.keyLock->load() > 0.5f;
+
+    int newKey = (int) rawParams.key->load();
+    if (! keyLocked)
+    {
+        newKey = random.nextInt (12);
+        setReal (ids::key, (float) newKey);
+        setReal (ids::scale, pick ({ 0.0f, 1.0f, 2.0f, 4.0f, 5.0f, 7.0f, 8.0f }));
+    }
+
+    // Pattern.  MUTATE and TRANSPOSE are left alone on purpose: they are the
+    // controls that let you keep a pattern you already like.
+    setReal (ids::rate,    pick ({ 2.0f, 3.0f, 4.0f, 4.0f, 5.0f }));
+    setReal (ids::steps,   pick ({ 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 12.0f, 16.0f }));
+    setReal (ids::density, 0.45f + random.nextFloat() * 0.5f);
+    setReal (ids::octaves, pick ({ 1.0f, 2.0f, 2.0f, 3.0f }));
+    setReal (ids::contour, pick ({ 0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f }));
+    setReal (ids::swing,   pick ({ 0.0f, 0.0f, 0.1f, 0.25f, 0.4f }));
+    setReal (ids::gate,    0.25f + random.nextFloat() * 0.5f);
+    setReal (ids::accent,  random.nextFloat() * 0.6f);
+    setReal (ids::transpose, 0.0f);
+
+    // Voice.
+    setReal (ids::wave,    pick ({ 0.0f, 1.0f, 1.0f, 2.0f, 3.0f }));
+    setReal (ids::attack,  0.002f + random.nextFloat() * 0.06f);
+    setReal (ids::decay,   0.05f + random.nextFloat() * 0.45f);
+    setReal (ids::sustain, 0.3f + random.nextFloat() * 0.55f);
+    setReal (ids::release, 0.1f + random.nextFloat() * 0.7f);
+    setReal (ids::detune,  random.nextFloat() * 0.45f);
+
+    // Filter.
+    setReal (ids::filterType,   pick ({ 1.0f, 1.0f, 2.0f, 3.0f }));
+    setReal (ids::filterCutoff, 1200.0f + random.nextFloat() * 10000.0f);
+    setReal (ids::filterReso,   random.nextFloat() * 0.45f);
+    setReal (ids::filterEnv,    random.nextFloat() * 0.5f);
+    setReal (ids::lfoShape,     pick ({ 0.0f, 0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f }));
+    setReal (ids::lfoSync,      pick ({ 0.0f, 0.0f, 1.0f }));
+    setReal (ids::lfoRate,      pick ({ 1.0f, 2.0f, 2.0f, 3.0f, 4.0f }));
+    setReal (ids::lfoRateHz,    0.2f + random.nextFloat() * 4.0f);
+    setReal (ids::motion,       random.nextFloat() * 0.4f);
+
+    // Character.  Noise is never randomised: it is a deliberate colour, and
+    // turning it on behind the user's back is never welcome.
+    setReal (ids::drive, random.nextFloat() * 0.45f);
+    setReal (ids::crush, random.nextFloat() * 0.3f);
+    setReal (ids::wow,   random.nextFloat() * 0.35f);
+    setReal (ids::fold,  random.nextFloat() < 0.5f ? 0.0f : random.nextFloat() * 0.35f);
+    setReal (ids::ring,  random.nextFloat() < 0.6f ? 0.0f : random.nextFloat() * 0.3f);
+
+    // Output.
+    setReal (ids::output, 0.0f);
+
+    // Seed the pool with a chord in the new key so RANDOM immediately plays.
+    pendingSeed.store (48 + newKey, std::memory_order_relaxed);
+}
+
+//==============================================================================
+void VesperaAudioProcessor::clearNotePool()
+{
+    pendingPoolClear.store (true, std::memory_order_relaxed);
+}
+
+//==============================================================================
+bool VesperaAudioProcessor::writePatternMidiFile (const juce::File& destination) const
+{
+    using namespace vespera;
+
+    PatternView v;
+    if (! getPatternView (v) || v.poolSize <= 0 || v.steps <= 0)
+        return false;
+
+    constexpr int ticksPerQuarter = 480;
+
+    const double beatsPerStep = rateInBeats ((int) rawParams.rate->load());
+    const double stepTicks = juce::jmax (1.0, beatsPerStep * (double) ticksPerQuarter);
+    const float  gate = rawParams.gate->load();
+    const float  swing = rawParams.swing->load();
+    const double bpm = juce::jlimit (20.0f, 300.0f, displayBpm.load (std::memory_order_relaxed));
+
+    juce::MidiMessageSequence seq;
+    seq.addEvent (juce::MidiMessage::tempoMetaEvent (
+                      juce::roundToInt (60000000.0 / (double) bpm)),
+                  0.0);
+
+    double t = 0.0;
+
+    for (int i = 0; i < v.steps; ++i)
+    {
+        if (v.active[i] && v.note[i] >= 0)
+        {
+            const double length = juce::jmax (1.0, stepTicks * (double) gate);
+            seq.addEvent (juce::MidiMessage::noteOn (1, v.note[i], v.velocity[i]), t);
+            seq.addEvent (juce::MidiMessage::noteOff (1, v.note[i]), t + length);
+        }
+
+        const double factor = (i % 2 == 1) ? (1.0 + swing * 0.5) : (1.0 - swing * 0.5);
+        t += stepTicks * factor;
+    }
+
+    seq.updateMatchedPairs();
+    seq.addEvent (juce::MidiMessage::endOfTrack(), t + 1.0);
+
+    juce::MidiFile midiFile;
+    midiFile.setTicksPerQuarterNote (ticksPerQuarter);
+    midiFile.addTrack (seq);
+
+    destination.deleteFile();
+
+    juce::FileOutputStream out (destination);
+    if (! out.openedOk())
+        return false;
+
+    return midiFile.writeTo (out);
+}
+
+//==============================================================================
+juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
+{
+    return new VesperaAudioProcessor();
+}
