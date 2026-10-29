@@ -38,6 +38,11 @@ enum Contour
     kNumContours
 };
 
+inline juce::StringArray getContourNames()
+{
+    return { "Up", "Down", "Up-Down", "Random", "Walk", "Reverse" };
+}
+
 struct PatternStep
 {
     bool  active    = false;
@@ -83,11 +88,14 @@ public:
                 fillStep (steps[(size_t) i], i, poolSize, forward, rng);
 
             std::reverse (steps.begin(), steps.begin() + length);
-            return;
+        }
+        else
+        {
+            for (int i = 0; i < length; ++i)
+                fillStep (steps[(size_t) i], i, poolSize, p, rng);
         }
 
-        for (int i = 0; i < length; ++i)
-            fillStep (steps[(size_t) i], i, poolSize, p, rng);
+        ensureNotEmpty (poolSize, p);
     }
 
     // Gently evolves the pattern at the end of a cycle.
@@ -105,6 +113,8 @@ public:
             if (rng.nextFloat() < amount * 0.35f)
                 fillStep (steps[(size_t) i], i, poolSize, p, rng, true);
         }
+
+        ensureNotEmpty (poolSize, p);
     }
 
     const PatternStep& getStep (int index) const
@@ -115,6 +125,29 @@ public:
     int getLength() const noexcept { return length; }
 
 private:
+    // A generator that hands back an empty pattern is a dead instrument: with a
+    // low density and a short pattern that happens often enough to be noticed
+    // after pressing RANDOM, so the first step is always kept alive.
+    void ensureNotEmpty (int poolSize, const PatternParams& p)
+    {
+        if (poolSize <= 0 || length <= 0)
+            return;
+
+        // Density at zero means silence on purpose, so leave it alone.
+        if (p.density <= 0.001f)
+            return;
+
+        for (int i = 0; i < length; ++i)
+            if (steps[(size_t) i].active)
+                return;
+
+        auto& first = steps[0];
+        first.active = true;
+        first.poolIndex = juce::jlimit (0, poolSize - 1, first.poolIndex);
+        first.octave = 0;
+        first.velocity = juce::jlimit (0.1f, 1.0f, 0.65f + p.accent * 0.3f);
+    }
+
     int pickPoolIndex (int step, int poolSize, int contour, juce::Random& rng)
     {
         poolSize = juce::jmax (1, poolSize);

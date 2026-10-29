@@ -42,23 +42,34 @@ public:
         walkValue = 0.0f;
         walkTarget = 0.0f;
         started = false;
+        lastShape = -1;
     }
 
     // Advances the phase by `cycles` (may be fractional) and returns -1 .. 1.
     float advance (double cycles, int shape, juce::Random& rng) noexcept
     {
+        shape = juce::jlimit (0, (int) numShapes - 1, shape);
+
+        // Switching shape restarts the random sources so they never inherit the
+        // state of the previous shape.
+        if (shape != lastShape)
+        {
+            started = false;
+            lastShape = shape;
+        }
+
         phase += cycles;
 
         bool wrapped = false;
-        while (phase >= 1.0)
+        if (phase >= 1.0)
         {
-            phase -= 1.0;
+            phase -= std::floor (phase);
             wrapped = true;
         }
 
         const float t = (float) phase;
 
-        switch (juce::jlimit (0, (int) numShapes - 1, shape))
+        switch (shape)
         {
             case sine:
                 return std::sin (juce::MathConstants<float>::twoPi * t);
@@ -100,6 +111,7 @@ private:
     float  walkValue = 0.0f;
     float  walkTarget = 0.0f;
     bool   started = false;
+    int    lastShape = -1;
 };
 
 } // namespace vespera

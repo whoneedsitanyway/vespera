@@ -27,9 +27,13 @@ public:
 private:
     void timerCallback() override;
 
+    static bool sameView (const PatternView& a, const PatternView& b);
+
     VesperaAudioProcessor& proc;
     PatternView view;
     bool haveView = false;
+    int  lastVoices = -1;
+    int  lastBpm    = -1;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PatternDisplay)
 };

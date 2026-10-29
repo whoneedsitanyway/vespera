@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <atomic>
+#include <array>
 #include <vector>
 
 #include "dsp/Scale.h"
@@ -86,6 +87,7 @@ namespace vespera
         int  key = 0;
         int  scale = 1;
         int  transpose = 0;
+        int  contour = 2;
         float density = 0.7f;
         float mutate = 0.0f;
     };
@@ -221,7 +223,9 @@ private:
     vespera::Lfo            lfo;
     vespera::Limiter        outputLimiter;
 
-    juce::Random rng { 0x5eed1234 };
+    // Seeded from the system random so two instances do not invent the same
+    // pattern, while RANDOM still keeps its own deterministic feel.
+    juce::Random rng { juce::Random::getSystemRandom().nextInt64() };
 
     double samplesToNextStep = 0.0;
     int    currentStep = 0;
@@ -235,6 +239,16 @@ private:
     float  lastAccent = -1.0f;
     std::atomic<int>  pendingSeed { -1 };
     std::atomic<bool> pendingPoolClear { false };
+
+    // Notes currently sounding through MONITOR, so a key change between note-on
+    // and note-off cannot leave a voice hanging on the old pitch.  The raw MIDI
+    // note is remembered next to the pitch that was actually played.
+    struct MonitorNote { int raw = -1; int played = -1; };
+    std::array<MonitorNote, 16> monitorNotes {};
+    int monitorNoteCount = 0;
+    void monitorNoteOn (int rawNote, int playedNote, float velocity);
+    void monitorNoteOff (int rawNote);
+    void monitorAllNotesOff();
 
     vespera::PatternView view;
     mutable juce::SpinLock viewLock;

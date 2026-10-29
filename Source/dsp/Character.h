@@ -87,6 +87,15 @@ public:
         const float bits = 16.0f - crushAmount * 13.0f;
         const float levels = std::pow (2.0f, bits - 1.0f);
 
+        // Every effect is off: nothing to do, so keep the whole stage out of the
+        // per-sample path (the default state of a fresh instance).
+        if (drive < 0.001f && crushAmount < 0.001f && noiseAmount < 0.001f
+            && wow < 0.001f && fold < 0.001f && ring < 0.001f)
+        {
+            activityEnv = 0.0f;
+            return;
+        }
+
         const float baseDelay  = 0.0020f * (float) sr;
         const float depth      = 0.0018f * (float) sr * wow;
         const double dt        = 1.0 / sr;
@@ -103,9 +112,12 @@ public:
             float r = std::isfinite (R[n]) ? R[n] : 0.0f;
 
             // --- note activity follower (drives the noise gate) --------------
-            const float mag = juce::jmax (std::abs (l), std::abs (r));
-            activityEnv += (mag > activityEnv ? attackCoeff : releaseCoeff)
-                               * (mag - activityEnv);
+            if (noiseAmount > 0.001f)
+            {
+                const float mag = juce::jmax (std::abs (l), std::abs (r));
+                activityEnv += (mag > activityEnv ? attackCoeff : releaseCoeff)
+                                   * (mag - activityEnv);
+            }
 
             // --- tape wow / flutter -----------------------------------------
             // The delay line is only used when wow is engaged, so the plugin

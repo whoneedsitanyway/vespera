@@ -40,12 +40,27 @@ public:
     void setParams (int newWave, float newAttack, float newDecay,
                     float newSustain, float newRelease, float newDetune)
     {
-        wave    = juce::jlimit (0, 3, newWave);
-        attack  = juce::jlimit (0.001f, 4.0f, newAttack);
-        decay   = juce::jlimit (0.001f, 4.0f, newDecay);
-        sustain = juce::jlimit (0.0f, 1.0f, newSustain);
-        release = juce::jlimit (0.01f, 8.0f, newRelease);
-        detune  = juce::jlimit (0.0f, 1.0f, newDetune);
+        const int   w  = juce::jlimit (0, 3, newWave);
+        const float a  = juce::jlimit (0.001f, 4.0f, newAttack);
+        const float d  = juce::jlimit (0.001f, 4.0f, newDecay);
+        const float s  = juce::jlimit (0.0f, 1.0f, newSustain);
+        const float r  = juce::jlimit (0.01f, 8.0f, newRelease);
+        const float dt = juce::jlimit (0.0f, 1.0f, newDetune);
+
+        // Called every block: skip the work when nothing actually moved.
+        if (paramsInitialised && w == wave
+            && ! changed (a, attack) && ! changed (d, decay)
+            && ! changed (s, sustain) && ! changed (r, release)
+            && ! changed (dt, detune))
+            return;
+
+        paramsInitialised = true;
+        wave = w;
+        attack = a;
+        decay = d;
+        sustain = s;
+        release = r;
+        detune = dt;
 
         juce::ADSR::Parameters p;
         p.attack  = attack;
@@ -188,6 +203,8 @@ private:
         slot->adsr.noteOn();
     }
 
+    static bool changed (float a, float b) noexcept { return std::abs (a - b) > 1.0e-7f; }
+
     static float polyBlep (float t, float dt) noexcept
     {
         if (dt <= 0.0f)
@@ -238,6 +255,7 @@ private:
     double sr = 48000.0;
     int    wave = 1;
     float  attack = 0.005f, decay = 0.25f, sustain = 0.6f, release = 0.4f, detune = 0.15f;
+    bool   paramsInitialised = false;
 
     std::array<Voice, kMaxVoices> voices {};
     uint64_t ageCounter = 0;

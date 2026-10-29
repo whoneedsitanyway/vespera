@@ -97,7 +97,7 @@ VesperaAudioProcessorEditor::VesperaAudioProcessorEditor (VesperaAudioProcessor&
               { "1/1", "1/2", "1/4", "1/8", "1/16", "1/32" },
               "RATE - step length of the generated pattern (synced to the host tempo)");
     addCombo (contourCombo, ids::contour, "CONTOUR",
-              { "Up", "Down", "Up-Down", "Random", "Walk", "Reverse" },
+              getContourNames(),
               "CONTOUR - how the generator walks through the note pool");
 
     addKnob (steps,   ids::steps,   "STEPS",

@@ -146,7 +146,7 @@ APVTS::ParameterLayout VesperaAudioProcessor::createParameterLayout()
     addInt    (ids::steps,   "Steps", 2, 16, 8);
     addFloat  (ids::density, "Density", 0.0f, 1.0f, 0.7f, "", 2);
     addInt    (ids::octaves, "Octaves", 1, 3, 2);
-    addChoice (ids::contour, "Contour", { "Up", "Down", "Up-Down", "Random", "Walk", "Reverse" }, 2);
+    addChoice (ids::contour, "Contour", getContourNames(), 2);
     addFloat  (ids::mutate,  "Mutate", 0.0f, 1.0f, 0.0f, "", 2);
     addFloat  (ids::swing,   "Swing",  0.0f, 1.0f, 0.0f, "", 2);
     addFloat  (ids::gate,    "Gate",   0.05f, 1.0f, 0.5f, "", 2);
@@ -271,6 +271,42 @@ bool VesperaAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) 
 }
 
 //==============================================================================
+void VesperaAudioProcessor::monitorNoteOn (int rawNote, int playedNote, float velocity)
+{
+    if (monitorNoteCount >= (int) monitorNotes.size())
+        monitorNoteOff (monitorNotes[0].raw);   // drop the oldest, never grow
+
+    monitorNotes[(size_t) monitorNoteCount++] = { rawNote, playedNote };
+    synth.noteOn (playedNote, velocity);
+}
+
+void VesperaAudioProcessor::monitorNoteOff (int rawNote)
+{
+    for (int i = 0; i < monitorNoteCount; ++i)
+    {
+        if (monitorNotes[(size_t) i].raw != rawNote)
+            continue;
+
+        synth.noteOff (monitorNotes[(size_t) i].played);
+
+        for (int j = i + 1; j < monitorNoteCount; ++j)
+            monitorNotes[(size_t) (j - 1)] = monitorNotes[(size_t) j];
+
+        --monitorNoteCount;
+        return;
+    }
+}
+
+void VesperaAudioProcessor::monitorAllNotesOff()
+{
+    for (int i = 0; i < monitorNoteCount; ++i)
+        synth.noteOff (monitorNotes[(size_t) i].played);
+
+    monitorNoteCount = 0;
+    synth.allNotesOff();
+}
+
+//==============================================================================
 void VesperaAudioProcessor::seedPool (int rootNote)
 {
     const int scaleIndex = (int) rawParams.scale->load();
@@ -383,11 +419,12 @@ void VesperaAudioProcessor::updatePatternView (const int* poolNotes, int poolSiz
     v.key = (int) rawParams.key->load();
     v.scale = (int) rawParams.scale->load();
     v.transpose = (int) rawParams.transpose->load();
+    v.contour = (int) rawParams.contour->load();
     v.density = rawParams.density->load();
     v.mutate = rawParams.mutate->load();
 
-    const int key = (int) rawParams.key->load();
-    const int scale = (int) rawParams.scale->load();
+    const int key = v.key;
+    const int scale = v.scale;
     for (int i = 0; i < vespera::NotePool::kMaxNotes; ++i)
         v.poolNotes[i] = (i < v.poolSize) ? poolNotes[i] : 0;
 
@@ -502,16 +539,17 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
                 poolChanged = true;
 
             if (monitorOn)
-                synth.noteOn (note, msg.getFloatVelocity());
+                monitorNoteOn (msg.getNoteNumber(), note, msg.getFloatVelocity());
         }
         else if (msg.isNoteOff())
         {
-            const int note = Scale::quantize (msg.getNoteNumber(), keyIndex, scaleIndex);
-            synth.noteOff (note);
+            // MONITOR tracks the quantised pitch, so a key change while a note is
+            // held still finds the voice it started.
+            monitorNoteOff (msg.getNoteNumber());
         }
         else if (msg.isAllNotesOff() || msg.isAllSoundOff())
         {
-            synth.allNotesOff();
+            monitorAllNotesOff();
         }
     }
 
@@ -524,8 +562,12 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     }
 
     // --- synth + pattern -----------------------------------------------------
-    outBuffer.setSize (2, numSamples, false, false, true);
-    outBuffer.clear();
+    // The buffer is sized once in prepareToPlay; only grow it if the host asks
+    // for a bigger block than advertised, so the audio thread never reallocates.
+    if (outBuffer.getNumSamples() < numSamples)
+        outBuffer.setSize (2, numSamples, false, false, true);
+
+    outBuffer.clear (0, numSamples);
 
     synth.setParams ((int) rp.wave->load(), rp.attack->load(), rp.decay->load(),
                      rp.sustain->load(), rp.release->load(), rp.detune->load());
@@ -811,26 +853,56 @@ void VesperaAudioProcessor::randomizeParameters()
     setReal (ids::swing,   pick ({ 0.0f, 0.0f, 0.1f, 0.25f, 0.4f }));
     setReal (ids::gate,    0.25f + random.nextFloat() * 0.5f);
     setReal (ids::accent,  random.nextFloat() * 0.6f);
-    setReal (ids::transpose, 0.0f);
 
-    // Voice.
-    setReal (ids::wave,    pick ({ 0.0f, 1.0f, 1.0f, 2.0f, 3.0f }));
+    // Filter.  The cutoff window depends on the type: a high-pass at 2 kHz (or a
+    // band-pass at 18 kHz) simply removes the voice, which is what made RANDOM
+    // land on silent settings.  Each type therefore gets its own musical range,
+    // and the modulation depth is kept modest where a wide sweep would leave the
+    // audible band.  The type is decided before the voice, because a sine has no
+    // harmonics to survive a band- or high-pass.
+    const float typeRoll = random.nextFloat();
+    const int filterType = typeRoll < 0.55f ? 1        // LP
+                         : typeRoll < 0.82f ? 2        // BP
+                         : typeRoll < 0.93f ? 3        // HP
+                                            : 0;       // Off
+
+    float cutoffLo = 2000.0f, cutoffHi = 12000.0f;
+    float maxReso = 0.45f, maxEnv = 0.5f, maxMotion = 0.4f;
+
+    switch (filterType)
+    {
+        case 1:  cutoffLo = 700.0f;  cutoffHi = 8000.0f; break;   // LP
+        case 2:  cutoffLo = 300.0f;  cutoffHi = 1500.0f;          // BP: around the
+                 maxReso = 0.30f; maxEnv = 0.35f; maxMotion = 0.25f; break;  // notes
+        case 3:  cutoffLo = 50.0f;   cutoffHi = 220.0f;           // HP: low cut
+                 maxReso = 0.25f; maxEnv = 0.25f; maxMotion = 0.2f; break;
+        default: break;                                           // Off
+    }
+
+    // Logarithmic spread so low cutoffs are not underrepresented.
+    const float cutoff = cutoffLo * std::pow (cutoffHi / cutoffLo, random.nextFloat());
+
+    // Voice.  A sine only survives the low-pass (and bypass), so the harmonic
+    // shapes are forced whenever the filter is going to carve the spectrum.
+    const bool needsHarmonics = filterType == 2 || filterType == 3;
+
+    setReal (ids::wave, needsHarmonics ? pick ({ 1.0f, 2.0f, 2.0f, 3.0f })
+                                       : pick ({ 0.0f, 1.0f, 1.0f, 2.0f, 3.0f }));
     setReal (ids::attack,  0.002f + random.nextFloat() * 0.06f);
     setReal (ids::decay,   0.05f + random.nextFloat() * 0.45f);
     setReal (ids::sustain, 0.3f + random.nextFloat() * 0.55f);
     setReal (ids::release, 0.1f + random.nextFloat() * 0.7f);
     setReal (ids::detune,  random.nextFloat() * 0.45f);
 
-    // Filter.
-    setReal (ids::filterType,   pick ({ 1.0f, 1.0f, 2.0f, 3.0f }));
-    setReal (ids::filterCutoff, 1200.0f + random.nextFloat() * 10000.0f);
-    setReal (ids::filterReso,   random.nextFloat() * 0.45f);
-    setReal (ids::filterEnv,    random.nextFloat() * 0.5f);
+    setReal (ids::filterType,   (float) filterType);
+    setReal (ids::filterCutoff, cutoff);
+    setReal (ids::filterReso,   random.nextFloat() * maxReso);
+    setReal (ids::filterEnv,    random.nextFloat() * maxEnv);
     setReal (ids::lfoShape,     pick ({ 0.0f, 0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f }));
     setReal (ids::lfoSync,      pick ({ 0.0f, 0.0f, 1.0f }));
     setReal (ids::lfoRate,      pick ({ 1.0f, 2.0f, 2.0f, 3.0f, 4.0f }));
     setReal (ids::lfoRateHz,    0.2f + random.nextFloat() * 4.0f);
-    setReal (ids::motion,       random.nextFloat() * 0.4f);
+    setReal (ids::motion,       random.nextFloat() * maxMotion);
 
     // Character.  Noise is never randomised: it is a deliberate colour, and
     // turning it on behind the user's back is never welcome.
@@ -879,15 +951,21 @@ bool VesperaAudioProcessor::writePatternMidiFile (const juce::File& destination)
 
     for (int i = 0; i < v.steps; ++i)
     {
+        // The swing factor changes the length of this step, so the note-off has
+        // to fit inside it: a gate of 1.0 on a short swing step would otherwise
+        // emit events out of order.
+        const double factor = (i % 2 == 1) ? (1.0 + swing * 0.5) : (1.0 - swing * 0.5);
+        const double interval = stepTicks * factor;
+
         if (v.active[i] && v.note[i] >= 0)
         {
-            const double length = juce::jmax (1.0, stepTicks * (double) gate);
+            const double length = juce::jlimit (1.0, juce::jmax (1.0, interval * 0.98),
+                                                stepTicks * (double) gate);
             seq.addEvent (juce::MidiMessage::noteOn (1, v.note[i], v.velocity[i]), t);
             seq.addEvent (juce::MidiMessage::noteOff (1, v.note[i]), t + length);
         }
 
-        const double factor = (i % 2 == 1) ? (1.0 + swing * 0.5) : (1.0 - swing * 0.5);
-        t += stepTicks * factor;
+        t += interval;
     }
 
     seq.updateMatchedPairs();

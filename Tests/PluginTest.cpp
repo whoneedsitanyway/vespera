@@ -285,9 +285,73 @@ int main()
         }
     }
 
-    // --- (1d) clear pool -----------------------------------------------------
+    // --- (1c) reverse contour reaches the pattern view mirrored --------------
     {
-        const double sr = 48000.0;
+        // Renders a fresh instance with the given contour and returns the notes
+        // of the generated steps.
+        auto renderContour = [] (float contour)
+        {
+            VesperaAudioProcessor proc;
+            proc.setPlayConfigDetails (0, 2, 48000.0, 512);
+
+            setParam (proc, "key", 0.0f);          // C
+            setParam (proc, "scale", 0.0f);        // major
+            setParam (proc, "poolSize", 4.0f);
+            setParam (proc, "steps", 8.0f);
+            setParam (proc, "density", 1.0f);
+            setParam (proc, "octaves", 1.0f);
+            setParam (proc, "mutate", 0.0f);
+            setParam (proc, "rate", 4.0f);
+            setParam (proc, "contour", contour);
+            proc.prepareToPlay (48000.0, 512);
+
+            juce::AudioBuffer<float> buffer (2, 512);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 0);
+            midi.addEvent (juce::MidiMessage::noteOn (1, 64, 0.8f), 0);
+            midi.addEvent (juce::MidiMessage::noteOn (1, 67, 0.8f), 0);
+
+            buffer.clear();
+            proc.processBlock (buffer, midi);
+
+            midi.clear();
+            for (int b = 0; b < 4; ++b)
+            {
+                buffer.clear();
+                proc.processBlock (buffer, midi);
+            }
+
+            vespera::PatternView v;
+            proc.getPatternView (v);
+            return v;
+        };
+
+        const auto up = renderContour (0.0f);
+        const auto rev = renderContour (5.0f);
+
+        bool mirrored = rev.contour == 5 && rev.steps == up.steps;
+        for (int i = 0; i < up.steps && mirrored; ++i)
+            if (rev.note[i] != up.note[up.steps - 1 - i])
+                mirrored = false;
+
+        std::cout << "reverse view: contour=" << rev.contour
+                  << " up=";
+        for (int i = 0; i < up.steps; ++i)
+            std::cout << up.note[i] << " ";
+        std::cout << " rev=";
+        for (int i = 0; i < rev.steps; ++i)
+            std::cout << rev.note[i] << " ";
+        std::cout << " mirrored=" << mirrored << std::endl;
+
+        if (! mirrored)
+        {
+            ++failures;
+            std::cout << "FAIL: reverse contour is not visible in the pattern view" << std::endl;
+        }
+    }
+
+    // --- (1d) clear pool -----------------------------------------------------
+    {        const double sr = 48000.0;
         const int block = 512;
 
         VesperaAudioProcessor proc;
@@ -361,6 +425,90 @@ int main()
         {
             ++failures;
             std::cout << "FAIL: RANDOM changed MUTATE or NOISE" << std::endl;
+        }
+    }
+
+    // --- (1f) RANDOM always leaves an audible patch --------------------------
+    // The cutoff window depends on the filter type, so a high-pass can no longer
+    // land at 18 kHz and make the instrument silent.
+    {
+        const double sr = 48000.0;
+        const int block = 512;
+        constexpr int kRolls = 24;
+
+        double quietest = 1.0e9;
+        int silent = 0;
+        int hpCount = 0;
+
+        for (int roll = 0; roll < kRolls; ++roll)
+        {
+            VesperaAudioProcessor proc;
+            proc.setPlayConfigDetails (0, 2, sr, block);
+            proc.prepareToPlay (sr, block);
+            proc.randomizeParameters();
+
+            if ((int) getParam (proc, "filterType") == 3)
+                ++hpCount;
+
+            juce::AudioBuffer<float> buffer (2, block);
+            juce::MidiBuffer midi;
+
+            double peak = 0.0;
+
+            for (int b = 0; b < 220; ++b)   // ~2.3 s
+            {
+                buffer.clear();
+                proc.processBlock (buffer, midi);
+                midi.clear();
+
+                for (int ch = 0; ch < 2; ++ch)
+                {
+                    const float* p = buffer.getReadPointer (ch);
+                    for (int n = 0; n < block; ++n)
+                        peak = juce::jmax (peak, std::abs ((double) p[n]));
+                }
+            }
+
+            quietest = juce::jmin (quietest, peak);
+
+            if (peak < 0.02)
+            {
+                ++silent;
+                vespera::PatternView v;
+                proc.getPatternView (v);
+                int act = 0;
+                for (int i = 0; i < v.steps; ++i)
+                    act += v.active[i] ? 1 : 0;
+
+                std::cout << "  silent roll: pool=" << v.poolSize
+                          << " steps=" << v.steps << " active=" << act
+                          << " type=" << (int) getParam (proc, "filterType")
+                          << " wave=" << (int) getParam (proc, "wave")
+                          << " cutoff=" << getParam (proc, "filterCutoff")
+                          << " reso=" << getParam (proc, "filterReso")
+                          << " env=" << getParam (proc, "filterEnv")
+                          << " motion=" << getParam (proc, "motion")
+                          << " density=" << getParam (proc, "density")
+                          << " gate=" << getParam (proc, "gate")
+                          << " oct=" << (int) getParam (proc, "octaves")
+                          << " rate=" << (int) getParam (proc, "rate")
+                          << " steps=" << (int) getParam (proc, "steps")
+                          << " attack=" << getParam (proc, "attack")
+                          << " decay=" << getParam (proc, "decay")
+                          << " sustain=" << getParam (proc, "sustain")
+                          << std::endl;
+            }
+        }
+
+        std::cout << "random audible: rolls=" << kRolls
+                  << " quietestPeak=" << quietest
+                  << " silent=" << silent
+                  << " highPassPicks=" << hpCount << std::endl;
+
+        if (silent > 0)
+        {
+            ++failures;
+            std::cout << "FAIL: RANDOM produced a silent patch" << std::endl;
         }
     }
 
