@@ -547,6 +547,49 @@ int main()
         }
     }
 
+    // --- (10) rate table: straight, triplet and dotted values ---------------
+    {
+        // Quarter-note beats per step, index order must match getRateNames().
+        const double expected[] = { 4.0, 2.0, 1.0, 0.5, 0.25, 0.125,
+                                    2.0 / 3.0, 1.0 / 3.0, 1.0 / 6.0,
+                                    1.5, 0.75, 0.375 };
+
+        const auto names = vespera::getRateNames();
+        const int n = (int) (sizeof (expected) / sizeof (expected[0]));
+
+        bool matches = names.size() == n && vespera::numRates() == n;
+        bool values = true;
+
+        for (int i = 0; i < n; ++i)
+        {
+            const double beats = vespera::rateInBeats (i);
+            if (std::abs (beats - expected[i]) > 1.0e-9)
+            {
+                values = false;
+                std::cout << "  rate " << i << " (" << names[i] << ") = " << beats
+                          << " expected " << expected[i] << std::endl;
+            }
+        }
+
+        // Triplets are 2/3 of the plain value, dotted are 1.5x.
+        const bool tripletOk = std::abs (vespera::rateInBeats (6)
+                                             - vespera::rateInBeats (2) * 2.0 / 3.0) < 1.0e-9;
+        const bool dottedOk  = std::abs (vespera::rateInBeats (9)
+                                             - vespera::rateInBeats (2) * 1.5) < 1.0e-9;
+
+        std::cout << "rate: names=" << names.size()
+                  << " matches=" << matches
+                  << " values=" << values
+                  << " triplet=" << tripletOk
+                  << " dotted=" << dottedOk << std::endl;
+
+        if (! (matches && values && tripletOk && dottedOk))
+        {
+            ++failures;
+            std::cout << "FAIL: pattern rate table is wrong" << std::endl;
+        }
+    }
+
     if (failures > 0)
     {
         std::cout << "FAIL: generator tests" << std::endl;

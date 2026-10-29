@@ -43,6 +43,7 @@ bool PatternDisplay::sameView (const PatternView& a, const PatternView& b)
     if (a.steps != b.steps || a.currentStep != b.currentStep
         || a.poolSize != b.poolSize || a.key != b.key || a.scale != b.scale
         || a.transpose != b.transpose || a.contour != b.contour
+        || a.rate != b.rate || a.running != b.running
         || std::abs (a.density - b.density) > 1.0e-6f
         || std::abs (a.mutate - b.mutate) > 1.0e-6f)
         return false;
@@ -192,10 +193,17 @@ void PatternDisplay::paint (juce::Graphics& g)
     const juce::String contourName = contourNames[juce::jlimit (0, contourNames.size() - 1,
                                                                view.contour)];
 
+    const auto rateNames = getRateNames();
+    const juce::String rateName = rateNames[juce::jlimit (0, rateNames.size() - 1, view.rate)];
+
+    const juce::String stateText = view.running ? mutateText
+                                                : "waiting for transport";
+
     g.drawText ("steps " + juce::String (view.steps)
+                    + "   |   " + rateName
                     + "   |   " + contourName
                     + "   |   density " + juce::String (densityPercent) + "%"
-                    + "   |   " + mutateText,
+                    + "   |   " + stateText,
                 footer, juce::Justification::centredLeft, false);
 }
 

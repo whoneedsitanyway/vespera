@@ -12,7 +12,7 @@
 //==============================================================================
 namespace vespera::factory
 {
-    inline constexpr int kFactoryPresetVersion = 6;
+    inline constexpr int kFactoryPresetVersion = 7;
 
     struct Preset
     {
@@ -55,6 +55,7 @@ namespace vespera::factory
   <PARAM id="octaves" value="2.0"/>
   <PARAM id="output" value="0.0"/>
   <PARAM id="limiter" value="1.0"/>
+  <PARAM id="transportSync" value="1.0"/>
   <PARAM id="poolSize" value="4.0"/>
   <PARAM id="rate" value="4.0"/>
   <PARAM id="release" value="0.4"/>
@@ -99,6 +100,7 @@ namespace vespera::factory
   <PARAM id="octaves" value="2.0"/>
   <PARAM id="output" value="0.0"/>
   <PARAM id="limiter" value="1.0"/>
+  <PARAM id="transportSync" value="1.0"/>
   <PARAM id="poolSize" value="5.0"/>
   <PARAM id="rate" value="4.0"/>
   <PARAM id="release" value="0.25"/>
@@ -143,6 +145,7 @@ namespace vespera::factory
   <PARAM id="octaves" value="2.0"/>
   <PARAM id="output" value="0.0"/>
   <PARAM id="limiter" value="1.0"/>
+  <PARAM id="transportSync" value="1.0"/>
   <PARAM id="poolSize" value="5.0"/>
   <PARAM id="rate" value="3.0"/>
   <PARAM id="release" value="0.6"/>
@@ -187,6 +190,7 @@ namespace vespera::factory
   <PARAM id="octaves" value="1.0"/>
   <PARAM id="output" value="0.0"/>
   <PARAM id="limiter" value="1.0"/>
+  <PARAM id="transportSync" value="1.0"/>
   <PARAM id="poolSize" value="3.0"/>
   <PARAM id="rate" value="3.0"/>
   <PARAM id="release" value="0.8"/>
@@ -231,6 +235,7 @@ namespace vespera::factory
   <PARAM id="octaves" value="3.0"/>
   <PARAM id="output" value="0.0"/>
   <PARAM id="limiter" value="1.0"/>
+  <PARAM id="transportSync" value="1.0"/>
   <PARAM id="poolSize" value="6.0"/>
   <PARAM id="rate" value="4.0"/>
   <PARAM id="release" value="0.8"/>
@@ -275,6 +280,7 @@ namespace vespera::factory
   <PARAM id="octaves" value="1.0"/>
   <PARAM id="output" value="0.0"/>
   <PARAM id="limiter" value="1.0"/>
+  <PARAM id="transportSync" value="1.0"/>
   <PARAM id="poolSize" value="3.0"/>
   <PARAM id="rate" value="2.0"/>
   <PARAM id="release" value="1.2"/>
@@ -319,6 +325,7 @@ namespace vespera::factory
   <PARAM id="octaves" value="1.0"/>
   <PARAM id="output" value="-2.0"/>
   <PARAM id="limiter" value="1.0"/>
+  <PARAM id="transportSync" value="1.0"/>
   <PARAM id="poolSize" value="4.0"/>
   <PARAM id="rate" value="4.0"/>
   <PARAM id="release" value="0.15"/>
@@ -363,6 +370,7 @@ namespace vespera::factory
   <PARAM id="octaves" value="2.0"/>
   <PARAM id="output" value="0.0"/>
   <PARAM id="limiter" value="1.0"/>
+  <PARAM id="transportSync" value="1.0"/>
   <PARAM id="poolSize" value="5.0"/>
   <PARAM id="rate" value="3.0"/>
   <PARAM id="release" value="1.5"/>

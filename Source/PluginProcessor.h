@@ -71,6 +71,7 @@ namespace vespera
         // Output.
         static constexpr const char* output  = "output";
         static constexpr const char* limiter = "limiter";
+        static constexpr const char* transportSync = "transportSync";
     }
 
     //==========================================================================
@@ -88,6 +89,8 @@ namespace vespera
         int  scale = 1;
         int  transpose = 0;
         int  contour = 2;
+        int  rate = 4;
+        bool running = true;
         float density = 0.7f;
         float mutate = 0.0f;
     };
@@ -140,6 +143,17 @@ public:
 
     int   getActiveVoiceCount() const noexcept { return displayVoices.load (std::memory_order_relaxed); }
     float getDisplayBpm() const noexcept       { return displayBpm.load (std::memory_order_relaxed); }
+
+    // True while the sequencer is actually advancing (i.e. the transport is
+    // playing, or transport sync is off).
+    bool isSequencerRunning() const noexcept
+    {
+        return displayRunning.load (std::memory_order_relaxed);
+    }
+
+    // Step length of the pattern, expressed in quarter-note beats.
+    static double rateInBeats (int rateIndex);
+    static int    numRates();
 
     vespera::DebugLogger& getDebugLogger() noexcept { return debugLogger; }
 
@@ -201,6 +215,7 @@ private:
 
         std::atomic<float>* output = nullptr;
         std::atomic<float>* limiter = nullptr;
+        std::atomic<float>* transportSync = nullptr;
     };
 
     void bindRawParams();
@@ -208,8 +223,7 @@ private:
 
     double triggerStep (double samplesPerStep, float gate, float swing);
     void updatePatternView (const int* poolNotes, int poolSize);
-    void seedPool (int rootNote);
-    static double rateInBeats (int rateIndex);
+    vespera::PatternParams currentPatternParams() const;
     static double lfoRateInBeats (int rateIndex);
 
     double currentSampleRate = 48000.0;
@@ -237,8 +251,18 @@ private:
     int    lastOctaves = -1;
     int    lastContour = -1;
     float  lastAccent = -1.0f;
-    std::atomic<int>  pendingSeed { -1 };
     std::atomic<bool> pendingPoolClear { false };
+
+    // RANDOM publishes the pool it wants; the audio thread applies it at the top
+    // of the next block.  The editor also shows it immediately, so the pool is
+    // right even while the host is not processing audio.
+    juce::SpinLock seedLock;
+    int  pendingSeedNotes[vespera::NotePool::kMaxNotes] {};
+    std::atomic<int> pendingSeedCount { 0 };
+
+    void buildSeedNotes (int key, int scaleIndex, int poolSize, int* dest, int& count) const;
+    void publishSeed (const int* notes, int count);
+    bool applyPendingSeed (int poolSize);
 
     // Notes currently sounding through MONITOR, so a key change between note-on
     // and note-off cannot leave a voice hanging on the old pitch.  The raw MIDI
@@ -263,6 +287,9 @@ private:
 
     std::atomic<int>   displayVoices { 0 };
     std::atomic<float> displayBpm    { 120.0f };
+    std::atomic<bool>  displayRunning { true };
+
+    bool lastSequencerRunning = true;
 
     std::atomic<bool> stateRestored { false };
     std::atomic<bool> defaultPresetApplied { false };

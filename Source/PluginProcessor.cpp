@@ -1,6 +1,8 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+#include <algorithm>
+
 //==============================================================================
 namespace
 {
@@ -81,6 +83,7 @@ void VesperaAudioProcessor::bindRawParams()
 
     rawParams.output  = bind (ids::output);
     rawParams.limiter = bind (ids::limiter);
+    rawParams.transportSync = bind (ids::transportSync);
 }
 
 //==============================================================================
@@ -142,7 +145,7 @@ APVTS::ParameterLayout VesperaAudioProcessor::createParameterLayout()
     addBool   (ids::keyLock, "Lock Key", false);
 
     // --- Pattern -------------------------------------------------------------
-    addChoice (ids::rate,    "Rate", { "1/1", "1/2", "1/4", "1/8", "1/16", "1/32" }, 4);
+    addChoice (ids::rate,    "Rate", getRateNames(), 4);
     addInt    (ids::steps,   "Steps", 2, 16, 8);
     addFloat  (ids::density, "Density", 0.0f, 1.0f, 0.7f, "", 2);
     addInt    (ids::octaves, "Octaves", 1, 3, 2);
@@ -195,14 +198,22 @@ APVTS::ParameterLayout VesperaAudioProcessor::createParameterLayout()
     addFloat (ids::output, "Output", -24.0f, 12.0f, 0.0f, "dB", 1);
     addBool  (ids::limiter, "Limiter", true);
 
+    // Follows the host transport: the generator only runs while the DAW plays.
+    // Hosts (and the standalone app) that report no transport keep free-running.
+    addBool  (ids::transportSync, "Play Sync", true);
+
     return { params.begin(), params.end() };
 }
 
 //==============================================================================
+int VesperaAudioProcessor::numRates()
+{
+    return vespera::numRates();
+}
+
 double VesperaAudioProcessor::rateInBeats (int rateIndex)
 {
-    static constexpr double beats[] = { 4.0, 2.0, 1.0, 0.5, 0.25, 0.125 };
-    return beats[juce::jlimit (0, 5, rateIndex)];
+    return vespera::rateInBeats (rateIndex);
 }
 
 double VesperaAudioProcessor::lfoRateInBeats (int rateIndex)
@@ -237,8 +248,16 @@ void VesperaAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     lastOctaves = -1;
     lastContour = -1;
     lastAccent = -1.0f;
-    pendingSeed.store (-1, std::memory_order_relaxed);
     pendingPoolClear.store (false, std::memory_order_relaxed);
+    lastSequencerRunning = true;
+    displayRunning.store (true, std::memory_order_relaxed);
+
+    {
+        const juce::SpinLock::ScopedLockType lock (seedLock);
+        pendingSeedCount.store (0, std::memory_order_relaxed);
+    }
+
+    monitorNoteCount = 0;
 
     {
         const juce::SpinLock::ScopedLockType lock (viewLock);
@@ -307,32 +326,99 @@ void VesperaAudioProcessor::monitorAllNotesOff()
 }
 
 //==============================================================================
-void VesperaAudioProcessor::seedPool (int rootNote)
+//  Picks a fresh pool from the current scale: the tonic plus random degrees,
+//  spread over two octaves, so every RANDOM press gives a different but always
+//  in-key set of notes.  Runs on the message thread.
+void VesperaAudioProcessor::buildSeedNotes (int key, int scaleIndex, int poolSize,
+                                            int* dest, int& count) const
 {
-    const int scaleIndex = (int) rawParams.scale->load();
-    const int key = (int) rawParams.key->load();
-    const int poolSize = (int) rawParams.poolSize->load();
+    using namespace vespera;
 
-    const auto& intervals = vespera::Scale::getIntervals (scaleIndex);
-    static constexpr int degrees[] = { 0, 2, 4, 6, 8 };
+    const auto& intervals = Scale::getIntervals (scaleIndex);
+    const int degrees = (int) intervals.size();
+    const int tonic = 48 + juce::jlimit (0, 11, key);
+
+    constexpr int kMaxCandidates = NotePool::kMaxNotes * 2;
+    int candidates[kMaxCandidates] {};
+    int n = 0;
+
+    // The tonic is always present, so the pool has a tonal centre.
+    candidates[n++] = tonic;
+
+    for (int octave = 0; octave < 2; ++octave)
+        for (int d = 1; d < degrees && n < kMaxCandidates; ++d)
+            candidates[n++] = tonic + octave * 12 + intervals[(size_t) d];
+
+    // Shuffle everything after the tonic: the tonic stays first, the rest is
+    // random, so repeated presses do not produce the same chord.
+    auto& random = juce::Random::getSystemRandom();
+    for (int i = n - 1; i > 1; --i)
+    {
+        const int j = 1 + random.nextInt (i);
+        std::swap (candidates[i], candidates[j]);
+    }
+
+    count = juce::jlimit (1, juce::jmax (1, juce::jmin (poolSize, n)), poolSize);
+
+    for (int i = 0; i < count; ++i)
+        dest[i] = juce::jlimit (0, 127, candidates[i]);
+
+    std::sort (dest, dest + count);
+}
+
+void VesperaAudioProcessor::publishSeed (const int* notes, int count)
+{
+    const juce::SpinLock::ScopedLockType lock (seedLock);
+
+    count = juce::jlimit (0, vespera::NotePool::kMaxNotes, count);
+
+    for (int i = 0; i < count; ++i)
+        pendingSeedNotes[i] = notes[i];
+
+    pendingSeedCount.store (count, std::memory_order_release);
+}
+
+bool VesperaAudioProcessor::applyPendingSeed (int poolSize)
+{
+    if (pendingSeedCount.load (std::memory_order_acquire) <= 0)
+        return false;
+
+    // The message thread only holds the lock for a few writes; if it is busy,
+    // try again on the next block instead of blocking the audio thread.
+    const juce::SpinLock::ScopedTryLockType lock (seedLock);
+    if (! lock.isLocked())
+        return false;
+
+    const int count = juce::jlimit (0, vespera::NotePool::kMaxNotes,
+                                    pendingSeedCount.load (std::memory_order_relaxed));
+    pendingSeedCount.store (0, std::memory_order_relaxed);
 
     const bool wasLatched = notePool.isLatched();
     notePool.setLatch (false);
     notePool.reset();
 
-    for (int d : degrees)
-    {
-        if (d < (int) intervals.size())
-        {
-            const int note = vespera::Scale::quantize (rootNote + intervals[(size_t) d],
-                                                       key, scaleIndex);
-            notePool.add (note, poolSize);
-        }
-    }
+    for (int i = 0; i < count; ++i)
+        notePool.add (pendingSeedNotes[i], poolSize);
 
     notePool.setLatch (wasLatched);
 
     patternDirty = true;
+    return true;
+}
+
+//==============================================================================
+vespera::PatternParams VesperaAudioProcessor::currentPatternParams() const
+{
+    vespera::PatternParams pp;
+    pp.steps   = (int) rawParams.steps->load();
+    pp.density = rawParams.density->load();
+    pp.octaves = (int) rawParams.octaves->load();
+    pp.contour = (int) rawParams.contour->load();
+    pp.mutate  = rawParams.mutate->load();
+    pp.gate    = rawParams.gate->load();
+    pp.swing   = rawParams.swing->load();
+    pp.accent  = rawParams.accent->load();
+    return pp;
 }
 
 //==============================================================================
@@ -340,15 +426,9 @@ double VesperaAudioProcessor::triggerStep (double samplesPerStep, float gate, fl
 {
     using namespace vespera;
 
-    PatternParams pp;
-    pp.steps   = (int) rawParams.steps->load();
-    pp.density = rawParams.density->load();
-    pp.octaves = (int) rawParams.octaves->load();
-    pp.contour = (int) rawParams.contour->load();
-    pp.mutate  = rawParams.mutate->load();
-    pp.gate    = gate;
-    pp.swing   = swing;
-    pp.accent  = rawParams.accent->load();
+    PatternParams pp = currentPatternParams();
+    pp.gate  = gate;
+    pp.swing = swing;
 
     int poolNotes[NotePool::kMaxNotes] {};
     const int poolSize = (int) rawParams.poolSize->load();
@@ -420,6 +500,8 @@ void VesperaAudioProcessor::updatePatternView (const int* poolNotes, int poolSiz
     v.scale = (int) rawParams.scale->load();
     v.transpose = (int) rawParams.transpose->load();
     v.contour = (int) rawParams.contour->load();
+    v.rate = (int) rawParams.rate->load();
+    v.running = isSequencerRunning();
     v.density = rawParams.density->load();
     v.mutate = rawParams.mutate->load();
 
@@ -471,14 +553,48 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     auto& rp = rawParams;
 
     // --- transport -----------------------------------------------------------
+    // The host may or may not report a transport at all (the standalone app has
+    // no playhead).  Only when it does can we follow its play/stop state.
     double bpm = currentBpm;
+    bool transportKnown = false;
+    bool transportPlaying = false;
+
     if (auto* ph = getPlayHead())
+    {
         if (auto pos = ph->getPosition())
+        {
+            transportKnown = true;
+            transportPlaying = pos->getIsPlaying();
+
             if (auto hostBpm = pos->getBpm())
                 bpm = *hostBpm;
+        }
+    }
 
     currentBpm = juce::jlimit (20.0, 300.0, bpm);
     displayBpm.store ((float) currentBpm, std::memory_order_relaxed);
+
+    // Play Sync: run the generator only while the DAW is playing.  A host that
+    // reports no transport (standalone) always free-runs, so the instrument is
+    // never mysteriously silent.
+    const bool playSync = rp.transportSync->load() > 0.5f;
+    const bool sequencerRunning = ! (playSync && transportKnown) || transportPlaying;
+
+    if (sequencerRunning != lastSequencerRunning)
+    {
+        // Restart the figure from its first step so every take begins the same
+        // way, and drop the pending step so playback starts on the downbeat.
+        lastSequencerRunning = sequencerRunning;
+        currentStep = 0;
+        samplesToNextStep = 0.0;
+
+        // Publish the new state so the display can show "waiting for transport".
+        int notes[NotePool::kMaxNotes] {};
+        const int n = notePool.getSorted (notes, (int) rp.poolSize->load());
+        updatePatternView (notes, n);
+    }
+
+    displayRunning.store (sequencerRunning, std::memory_order_relaxed);
 
     // --- parameter snapshots -------------------------------------------------
     const int keyIndex   = (int) rp.key->load();
@@ -489,9 +605,8 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
 
     notePool.setLatch (latchOn);
 
-    // A RANDOM press can seed the pool from the message thread.
-    if (const int seed = pendingSeed.exchange (-1, std::memory_order_relaxed); seed >= 0)
-        seedPool (seed);
+    // --- pool updates requested by the editor --------------------------------
+    bool poolChanged = false;
 
     // The UI clear button empties the pool on the audio thread.
     if (pendingPoolClear.exchange (false, std::memory_order_relaxed))
@@ -502,9 +617,6 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         patternDirty = true;
         updatePatternView (nullptr, 0);
     }
-
-    // --- MIDI input ----------------------------------------------------------
-    bool poolChanged = false;
 
     // Changing the key or scale re-quantises the notes already in the pool so
     // the generator never keeps playing pitches from the previous scale.
@@ -525,6 +637,25 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         lastKey = keyIndex;
         lastScale = scaleIndex;
         patternDirty = true;
+        poolChanged = true;
+    }
+
+    // A RANDOM press asks for a brand new pool.  Applied after the re-quantise,
+    // so the pool ends up exactly the notes RANDOM chose from the new scale.
+    // The pattern is rebuilt straight away as well: otherwise the old notes
+    // would keep sounding (and be shown) until the next step boundary.
+    if (applyPendingSeed (poolSize))
+    {
+        lastKey = keyIndex;
+        lastScale = scaleIndex;
+
+        int notes[NotePool::kMaxNotes] {};
+        const int n = notePool.getSorted (notes, poolSize);
+
+        pattern.regenerate (n, currentPatternParams(), rng);
+        currentStep = 0;
+        patternDirty = false;
+        updatePatternView (notes, n);
         poolChanged = true;
     }
 
@@ -579,6 +710,16 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     const float swing = rp.swing->load();
 
     int pos = 0;
+
+    if (! sequencerRunning)
+    {
+        // Transport is stopped: keep rendering so MONITOR notes and release
+        // tails still sound, but never advance the pattern.
+        synth.render (outBuffer.getWritePointer (0),
+                      outBuffer.getWritePointer (1), numSamples);
+        pos = numSamples;
+    }
+
     while (pos < numSamples)
     {
         if (samplesToNextStep <= 0.0)
@@ -750,6 +891,8 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         snap.output = rp.output->load();
         snap.limiterOn = limiterOn;
         snap.grDb = grDb;
+        snap.playSyncOn = playSync;
+        snap.seqRunning = sequencerRunning;
         snap.bpm = (float) currentBpm;
         snap.activeVoices = synth.getActiveVoiceCount();
         snap.currentStep = currentStep;
@@ -835,17 +978,16 @@ void VesperaAudioProcessor::randomizeParameters()
     // only reshapes the pattern and the sound.
     const bool keyLocked = rawParams.keyLock->load() > 0.5f;
 
-    int newKey = (int) rawParams.key->load();
     if (! keyLocked)
     {
-        newKey = random.nextInt (12);
-        setReal (ids::key, (float) newKey);
+        setReal (ids::key, (float) random.nextInt (12));
         setReal (ids::scale, pick ({ 0.0f, 1.0f, 2.0f, 4.0f, 5.0f, 7.0f, 8.0f }));
     }
 
     // Pattern.  MUTATE and TRANSPOSE are left alone on purpose: they are the
     // controls that let you keep a pattern you already like.
-    setReal (ids::rate,    pick ({ 2.0f, 3.0f, 4.0f, 4.0f, 5.0f }));
+    setReal (ids::rate,    pick ({ 2.0f, 3.0f, 4.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f,
+                                   9.0f, 10.0f, 11.0f }));
     setReal (ids::steps,   pick ({ 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 12.0f, 16.0f }));
     setReal (ids::density, 0.45f + random.nextFloat() * 0.5f);
     setReal (ids::octaves, pick ({ 1.0f, 2.0f, 2.0f, 3.0f }));
@@ -915,8 +1057,44 @@ void VesperaAudioProcessor::randomizeParameters()
     // Output.
     setReal (ids::output, 0.0f);
 
-    // Seed the pool with a chord in the new key so RANDOM immediately plays.
-    pendingSeed.store (48 + newKey, std::memory_order_relaxed);
+    // Seed the pool with random notes of the new key so RANDOM immediately plays
+    // something musical.  The notes are published for the audio thread and also
+    // shown right away, so the pool can never lag behind the key.
+    const int finalKey = (int) rawParams.key->load();
+    const int finalScale = (int) rawParams.scale->load();
+
+    int seedNotes[NotePool::kMaxNotes] {};
+    int seedCount = 0;
+    buildSeedNotes (finalKey, finalScale, (int) rawParams.poolSize->load(),
+                    seedNotes, seedCount);
+    publishSeed (seedNotes, seedCount);
+
+    {
+        const juce::SpinLock::ScopedLockType lock (viewLock);
+        view.key = finalKey;
+        view.scale = finalScale;
+        view.transpose = (int) rawParams.transpose->load();
+        view.contour = (int) rawParams.contour->load();
+        view.rate = (int) rawParams.rate->load();
+        view.running = true;
+        view.density = rawParams.density->load();
+        view.mutate = rawParams.mutate->load();
+        view.poolSize = seedCount;
+        view.currentStep = 0;
+
+        for (int i = 0; i < NotePool::kMaxNotes; ++i)
+            view.poolNotes[i] = (i < seedCount) ? seedNotes[i] : 0;
+
+        // The steps belong to the previous pattern; the audio thread rebuilds
+        // them on the next block.  Until then show nothing rather than notes
+        // from the old key.
+        for (int i = 0; i < PatternEngine::kMaxSteps; ++i)
+        {
+            view.active[i] = false;
+            view.note[i] = -1;
+            view.velocity[i] = 0.0f;
+        }
+    }
 }
 
 //==============================================================================

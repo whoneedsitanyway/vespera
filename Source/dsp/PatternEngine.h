@@ -43,6 +43,30 @@ inline juce::StringArray getContourNames()
     return { "Up", "Down", "Up-Down", "Random", "Walk", "Reverse" };
 }
 
+// Step length in note values.  The first six entries keep their original order
+// (so saved presets keep their tempo), the triplets and dotted values follow.
+inline juce::StringArray getRateNames()
+{
+    return { "1/1", "1/2", "1/4", "1/8", "1/16", "1/32",
+             "1/4T", "1/8T", "1/16T", "1/4D", "1/8D", "1/16D" };
+}
+
+// Step length expressed in quarter-note beats, index order matches getRateNames().
+inline double rateInBeats (int rateIndex)
+{
+    static constexpr double beats[] =
+    {
+        4.0, 2.0, 1.0, 0.5, 0.25, 0.125,       // 1/1   1/2   1/4   1/8  1/16  1/32
+        2.0 / 3.0, 1.0 / 3.0, 1.0 / 6.0,       // 1/4T  1/8T  1/16T
+        1.5, 0.75, 0.375                       // 1/4D  1/8D  1/16D
+    };
+
+    const int n = (int) (sizeof (beats) / sizeof (beats[0]));
+    return beats[juce::jlimit (0, n - 1, rateIndex)];
+}
+
+inline int numRates() { return 12; }
+
 struct PatternStep
 {
     bool  active    = false;
@@ -95,7 +119,7 @@ public:
                 fillStep (steps[(size_t) i], i, poolSize, p, rng);
         }
 
-        ensureNotEmpty (poolSize, p);
+        ensurePlayable (poolSize, p);
     }
 
     // Gently evolves the pattern at the end of a cycle.
@@ -114,7 +138,7 @@ public:
                 fillStep (steps[(size_t) i], i, poolSize, p, rng, true);
         }
 
-        ensureNotEmpty (poolSize, p);
+        ensurePlayable (poolSize, p);
     }
 
     const PatternStep& getStep (int index) const
@@ -127,8 +151,10 @@ public:
 private:
     // A generator that hands back an empty pattern is a dead instrument: with a
     // low density and a short pattern that happens often enough to be noticed
-    // after pressing RANDOM, so the first step is always kept alive.
-    void ensureNotEmpty (int poolSize, const PatternParams& p)
+    // after pressing RANDOM, so the first step is always kept alive.  It also
+    // means a fresh pattern is audible immediately instead of waiting for the
+    // first active step somewhere in the middle.
+    void ensurePlayable (int poolSize, const PatternParams& p)
     {
         if (poolSize <= 0 || length <= 0)
             return;
@@ -137,15 +163,11 @@ private:
         if (p.density <= 0.001f)
             return;
 
-        for (int i = 0; i < length; ++i)
-            if (steps[(size_t) i].active)
-                return;
-
         auto& first = steps[0];
         first.active = true;
         first.poolIndex = juce::jlimit (0, poolSize - 1, first.poolIndex);
-        first.octave = 0;
-        first.velocity = juce::jlimit (0.1f, 1.0f, 0.65f + p.accent * 0.3f);
+        first.octave = juce::jlimit (-1, 1, first.octave);
+        first.velocity = juce::jlimit (0.1f, 1.0f, juce::jmax (first.velocity, 0.7f));
     }
 
     int pickPoolIndex (int step, int poolSize, int contour, juce::Random& rng)

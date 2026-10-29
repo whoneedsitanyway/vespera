@@ -244,6 +244,8 @@ juce::String DebugLogger::formatLine (const BlockSnapshot& s, bool anomaly)
          << "  out=" << juce::String (s.output, 1)
          << " LIM=" << (s.limiterOn ? 1 : 0)
          << " GR=" << juce::String (s.grDb, 1)
+         << " PLAYSYNC=" << (s.playSyncOn ? 1 : 0)
+         << " RUN=" << (s.seqRunning ? 1 : 0)
          << " LT=" << (s.latchOn ? 1 : 0)
          << " MON=" << (s.monitorOn ? 1 : 0)
          << " KEYLOCK=" << (s.keyLockOn ? 1 : 0);

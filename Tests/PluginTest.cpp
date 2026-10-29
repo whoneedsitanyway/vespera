@@ -19,6 +19,26 @@
 
 namespace
 {
+    // Minimal host transport so the Play Sync behaviour can be exercised without
+    // a real DAW.
+    struct TestPlayHead : juce::AudioPlayHead
+    {
+        bool   playing = false;
+        double bpm = 120.0;
+
+        juce::Optional<PositionInfo> getPosition() const override
+        {
+            PositionInfo info;
+            info.setBpm (bpm);
+            info.setIsPlaying (playing);
+            info.setTimeInSamples ((juce::int64) 0);
+            info.setTimeInSeconds (0.0);
+            info.setPpqPosition (0.0);
+            info.setTimeSignature (TimeSignature { 4, 4 });
+            return info;
+        }
+    };
+
     void setParam (VesperaAudioProcessor& proc, const char* id, float real)
     {
         if (auto* p = proc.apvts.getParameter (id))
@@ -509,6 +529,148 @@ int main()
         {
             ++failures;
             std::cout << "FAIL: RANDOM produced a silent patch" << std::endl;
+        }
+    }
+
+    // --- (1g) RANDOM seeds the pool from the new key -------------------------
+    {
+        int badRolls = 0;
+        int totalNotes = 0;
+
+        for (int roll = 0; roll < 30; ++roll)
+        {
+            VesperaAudioProcessor proc;
+            proc.setPlayConfigDetails (0, 2, 48000.0, 512);
+            proc.prepareToPlay (48000.0, 512);
+            proc.randomizeParameters();
+
+            juce::AudioBuffer<float> buffer (2, 512);
+            juce::MidiBuffer midi;
+
+            for (int b = 0; b < 8; ++b)
+            {
+                buffer.clear();
+                proc.processBlock (buffer, midi);
+            }
+
+            vespera::PatternView v;
+            proc.getPatternView (v);
+
+            bool allInScale = v.poolSize > 0;
+            juce::String notesText;
+
+            for (int i = 0; i < v.poolSize; ++i)
+            {
+                notesText << v.poolNotes[i] << " ";
+                ++totalNotes;
+
+                if (! vespera::Scale::isInScale (v.poolNotes[i], v.key, v.scale))
+                    allInScale = false;
+            }
+
+            // The steps must have been rebuilt from the new pool too: a pattern
+            // left over from the previous key is exactly what looked wrong.
+            for (int i = 0; i < v.steps; ++i)
+                if (v.active[i] && v.note[i] >= 0
+                    && ! vespera::Scale::isInScale (v.note[i], v.key, v.scale))
+                    allInScale = false;
+
+            if (! allInScale)
+            {
+                ++badRolls;
+                std::cout << "  pool out of key: key=" << v.key << " scale=" << v.scale
+                          << " size=" << v.poolSize << " notes=" << notesText << std::endl;
+            }
+        }
+
+        std::cout << "random pool: rolls=30 bad=" << badRolls
+                  << " notes=" << totalNotes << std::endl;
+
+        if (badRolls > 0)
+        {
+            ++failures;
+            std::cout << "FAIL: RANDOM left notes outside the key in the pool" << std::endl;
+        }
+    }
+
+    // --- (1h) the seeded pool is in key for every key/scale, and varies ------
+    {
+        int badCombos = 0;
+        int checked = 0;
+
+        for (int key = 0; key < 12; ++key)
+        {
+            for (int scale = 0; scale < 10; ++scale)
+            {
+                VesperaAudioProcessor proc;
+                proc.setPlayConfigDetails (0, 2, 48000.0, 512);
+                proc.prepareToPlay (48000.0, 512);
+
+                setParam (proc, "keyLock", 1.0f);   // keep the key we just set
+                setParam (proc, "key", (float) key);
+                setParam (proc, "scale", (float) scale);
+
+                proc.randomizeParameters();
+
+                vespera::PatternView v;
+                proc.getPatternView (v);
+
+                ++checked;
+
+                bool ok = v.poolSize > 0 && v.key == key && v.scale == scale;
+
+                for (int i = 0; i < v.poolSize && ok; ++i)
+                    if (! vespera::Scale::isInScale (v.poolNotes[i], key, scale))
+                        ok = false;
+
+                if (! ok)
+                {
+                    ++badCombos;
+                    std::cout << "  seed out of key: key=" << key << " scale=" << scale
+                              << " viewKey=" << v.key << " viewScale=" << v.scale
+                              << " notes=";
+                    for (int i = 0; i < v.poolSize; ++i)
+                        std::cout << v.poolNotes[i] << " ";
+                    std::cout << std::endl;
+                }
+            }
+        }
+
+        // Variety: repeated presses must not hand back the same chord.
+        VesperaAudioProcessor proc;
+        proc.setPlayConfigDetails (0, 2, 48000.0, 512);
+        proc.prepareToPlay (48000.0, 512);
+        setParam (proc, "keyLock", 1.0f);
+
+        std::vector<juce::String> seen;
+
+        for (int roll = 0; roll < 20; ++roll)
+        {
+            proc.randomizeParameters();
+
+            vespera::PatternView v;
+            proc.getPatternView (v);
+
+            juce::String sig;
+            for (int i = 0; i < v.poolSize; ++i)
+                sig << v.poolNotes[i] << ",";
+
+            bool known = false;
+            for (const auto& s : seen)
+                if (s == sig)
+                    known = true;
+
+            if (! known)
+                seen.push_back (sig);
+        }
+
+        std::cout << "seed pool: combos=" << checked << " bad=" << badCombos
+                  << " distinct=" << (int) seen.size() << "/20" << std::endl;
+
+        if (badCombos > 0 || seen.size() < 8)
+        {
+            ++failures;
+            std::cout << "FAIL: seeded pool is out of key or never varies" << std::endl;
         }
     }
 
@@ -1030,6 +1192,228 @@ int main()
         {
             ++failures;
             std::cout << "FAIL: limiter checkbox is missing from OUTPUT" << std::endl;
+        }
+    }
+
+    // --- (8) Play Sync follows the host transport ----------------------------
+    {
+        const double sr = 48000.0;
+        const int block = 512;
+
+        auto renderBlocks = [] (VesperaAudioProcessor& proc, int blocks, double& peak)
+        {
+            juce::AudioBuffer<float> buffer (2, 512);
+            juce::MidiBuffer midi;
+
+            for (int b = 0; b < blocks; ++b)
+            {
+                buffer.clear();
+                proc.processBlock (buffer, midi);
+                midi.clear();
+
+                for (int ch = 0; ch < 2; ++ch)
+                {
+                    const float* p = buffer.getReadPointer (ch);
+                    for (int n = 0; n < 512; ++n)
+                        peak = juce::jmax (peak, std::abs ((double) p[n]));
+                }
+            }
+        };
+
+        auto makeProc = [] (VesperaAudioProcessor& proc, TestPlayHead& head)
+        {
+            proc.setPlayConfigDetails (0, 2, 48000.0, 512);
+            proc.setPlayHead (&head);
+
+            setParam (proc, "key", 0.0f);
+            setParam (proc, "scale", 1.0f);
+            setParam (proc, "poolSize", 4.0f);
+            setParam (proc, "steps", 8.0f);
+            setParam (proc, "density", 1.0f);
+            setParam (proc, "rate", 4.0f);
+            setParam (proc, "gate", 0.9f);
+            setParam (proc, "filterType", 1.0f);
+            setParam (proc, "filterCutoff", 12000.0f);
+            setParam (proc, "monitor", 0.0f);
+            setParam (proc, "transportSync", 1.0f);
+        };
+
+        // (a) transport stopped from the start: the generator must stay silent.
+        {
+            TestPlayHead head;
+            head.playing = false;
+
+            VesperaAudioProcessor proc;
+            makeProc (proc, head);
+            proc.prepareToPlay (sr, block);
+
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 0);
+            midi.addEvent (juce::MidiMessage::noteOn (1, 64, 0.8f), 0);
+            midi.addEvent (juce::MidiMessage::noteOn (1, 67, 0.8f), 0);
+
+            juce::AudioBuffer<float> buffer (2, block);
+            buffer.clear();
+            proc.processBlock (buffer, midi);
+
+            double stoppedPeak = 0.0;
+            renderBlocks (proc, 40, stoppedPeak);
+
+            const bool silentWhileStopped = stoppedPeak < 1.0e-4;
+            const bool reportsStopped = ! proc.isSequencerRunning();
+
+            // (b) transport starts: the pattern must play from step 0.
+            head.playing = true;
+            double playingPeak = 0.0;
+            renderBlocks (proc, 60, playingPeak);
+
+            const bool audibleWhilePlaying = playingPeak > 0.01;
+            const bool reportsRunning = proc.isSequencerRunning();
+
+            vespera::PatternView playingView;
+            proc.getPatternView (playingView);
+
+            // (c) transport stops again: the sequencer must report stopped and
+            // the release tails must die away shortly after.
+            head.playing = false;
+            renderBlocks (proc, 4, playingPeak);
+            const bool reportsStoppedAgain = ! proc.isSequencerRunning();
+
+            double settlingPeak = 0.0;
+            renderBlocks (proc, 60, settlingPeak);   // ~0.6 s: release tails only
+
+            double tailPeak = 0.0;
+            renderBlocks (proc, 200, tailPeak);      // ~2 s: must be dead silent
+            const bool silentAfterStop = tailPeak < 1.0e-4;
+
+            std::cout << "play sync: stoppedSilent=" << silentWhileStopped
+                      << " stoppedFlag=" << reportsStopped
+                      << " playingPeak=" << playingPeak
+                      << " runningFlag=" << reportsRunning
+                      << " firstStep=" << playingView.currentStep
+                      << " stopFlag=" << reportsStoppedAgain
+                      << " settle=" << settlingPeak
+                      << " tailPeak=" << tailPeak
+                      << " tailSilent=" << silentAfterStop << std::endl;
+
+            if (! (silentWhileStopped && reportsStopped && audibleWhilePlaying
+                   && reportsRunning && reportsStoppedAgain && silentAfterStop))
+            {
+                ++failures;
+                std::cout << "FAIL: Play Sync does not follow the transport" << std::endl;
+            }
+        }
+
+        // (d) with Play Sync off the generator free-runs even while stopped.
+        {
+            TestPlayHead head;
+            head.playing = false;
+
+            VesperaAudioProcessor proc;
+            makeProc (proc, head);
+            setParam (proc, "transportSync", 0.0f);
+            proc.prepareToPlay (sr, block);
+
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 0);
+            midi.addEvent (juce::MidiMessage::noteOn (1, 64, 0.8f), 0);
+
+            juce::AudioBuffer<float> buffer (2, block);
+            buffer.clear();
+            proc.processBlock (buffer, midi);
+
+            double freePeak = 0.0;
+            renderBlocks (proc, 60, freePeak);
+
+            std::cout << "play sync off: peak=" << freePeak
+                      << " running=" << proc.isSequencerRunning() << std::endl;
+
+            if (freePeak < 0.01 || ! proc.isSequencerRunning())
+            {
+                ++failures;
+                std::cout << "FAIL: Play Sync off should free-run" << std::endl;
+            }
+        }
+
+        // (e) a host without any transport information keeps free-running.
+        {
+            VesperaAudioProcessor proc;
+            proc.setPlayConfigDetails (0, 2, sr, block);
+            setParam (proc, "key", 0.0f);
+            setParam (proc, "scale", 1.0f);
+            setParam (proc, "poolSize", 4.0f);
+            setParam (proc, "steps", 8.0f);
+            setParam (proc, "density", 1.0f);
+            setParam (proc, "filterCutoff", 12000.0f);
+            setParam (proc, "transportSync", 1.0f);
+            proc.prepareToPlay (sr, block);
+
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 0);
+
+            juce::AudioBuffer<float> buffer (2, block);
+            buffer.clear();
+            proc.processBlock (buffer, midi);
+
+            double peak = 0.0;
+            renderBlocks (proc, 60, peak);
+
+            std::cout << "no transport: peak=" << peak
+                      << " running=" << proc.isSequencerRunning() << std::endl;
+
+            if (peak < 0.01 || ! proc.isSequencerRunning())
+            {
+                ++failures;
+                std::cout << "FAIL: no transport should free-run" << std::endl;
+            }
+        }
+    }
+
+    // --- (9) editor exposes the new rates and the Play Sync switch -----------
+    {
+        VesperaAudioProcessor proc;
+        proc.setPlayConfigDetails (0, 2, 48000.0, 512);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+
+        juce::ComboBox* rateBox = nullptr;
+        juce::Button* playSync = nullptr;
+
+        std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+        {
+            for (auto* child : c.getChildren())
+            {
+                if (auto* box = dynamic_cast<juce::ComboBox*> (child))
+                    if (box->getTooltip().startsWith ("RATE - step length"))
+                        rateBox = box;
+
+                if (auto* b = dynamic_cast<juce::Button*> (child))
+                    if (b->getButtonText() == "Play Sync")
+                        playSync = b;
+
+                walk (*child);
+            }
+        };
+        walk (*editor);
+
+        const bool rateOk = rateBox != nullptr
+                         && rateBox->getNumItems() == vespera::numRates()
+                         && rateBox->getItemText (6) == "1/4T"
+                         && rateBox->getItemText (9) == "1/4D";
+
+        const bool syncOk = playSync != nullptr
+                         && playSync->isVisible()
+                         && playSync->getToggleState()
+                         && playSync->getBounds().getWidth() > 20;
+
+        std::cout << "editor rates: items=" << (rateBox != nullptr ? rateBox->getNumItems() : -1)
+                  << " ok=" << rateOk
+                  << " playSync=" << syncOk << std::endl;
+
+        if (! (rateOk && syncOk))
+        {
+            ++failures;
+            std::cout << "FAIL: RATE / Play Sync missing from the editor" << std::endl;
         }
     }
 

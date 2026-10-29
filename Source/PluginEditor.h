@@ -103,7 +103,9 @@ private:
     // OUTPUT
     Knob output;
     juce::ToggleButton limiterButton { "Limiter" };
+    juce::ToggleButton playSyncButton { "Play Sync" };
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> limiterAttach;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> playSyncAttach;
 
     juce::ToggleButton latchButton    { "Latch" };
     juce::ToggleButton monitorButton  { "Monitor" };

@@ -40,6 +40,8 @@ struct BlockSnapshot
     bool keyLockOn   = false;
     bool lfoSynced   = false;
     bool limiterOn   = true;
+    bool playSyncOn  = true;
+    bool seqRunning  = true;
 
     unsigned flags = 0;
 };

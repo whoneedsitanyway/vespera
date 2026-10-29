@@ -94,8 +94,8 @@ VesperaAudioProcessorEditor::VesperaAudioProcessorEditor (VesperaAudioProcessor&
 
     // --- PATTERN -------------------------------------------------------------
     addCombo (rateCombo, ids::rate, "RATE",
-              { "1/1", "1/2", "1/4", "1/8", "1/16", "1/32" },
-              "RATE - step length of the generated pattern (synced to the host tempo)");
+              getRateNames(),
+              "RATE - step length of the generated pattern (straight, triplet or dotted)");
     addCombo (contourCombo, ids::contour, "CONTOUR",
               getContourNames(),
               "CONTOUR - how the generator walks through the note pool");
@@ -168,6 +168,12 @@ VesperaAudioProcessorEditor::VesperaAudioProcessorEditor (VesperaAudioProcessor&
     addAndMakeVisible (limiterButton);
     limiterAttach = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
         processorRef.apvts, ids::limiter, limiterButton);
+
+    playSyncButton.setTooltip ("PLAY SYNC - the generator only runs while the host transport "
+                               "is playing, and stops when the DAW stops");
+    addAndMakeVisible (playSyncButton);
+    playSyncAttach = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+        processorRef.apvts, ids::transportSync, playSyncButton);
 
     startTimerHz (10);
 
@@ -680,10 +686,12 @@ void VesperaAudioProcessorEditor::resized()
     {
         auto col = outArea.reduced (10, 8);
         col.removeFromTop (20);
-        auto bottom = col.removeFromBottom (26);
-        col.removeFromBottom (8);   // small gap above the checkbox
+        auto bottom = col.removeFromBottom (26 + 8 + 26);
+        col.removeFromBottom (8);   // small gap above the checkboxes
         placeGrid ({ &output }, col, 1);
-        limiterButton.setBounds (bottom);
+        limiterButton.setBounds (bottom.removeFromTop (26));
+        bottom.removeFromTop (8);
+        playSyncButton.setBounds (bottom.removeFromTop (26));
     }
 
     updateLfoRateUi();
