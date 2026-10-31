@@ -103,11 +103,11 @@ VesperaAudioProcessorEditor::VesperaAudioProcessorEditor (VesperaAudioProcessor&
     addKnob (steps,   ids::steps,   "STEPS",
              "STEPS - pattern length in steps");
     addKnob (density, ids::density, "DENSITY",
-             "DENSITY - probability that a step plays a note");
+             "DENSITY - how many steps of the motif play a note");
     addKnob (octaves, ids::octaves, "OCTAVES",
-             "OCTAVES - range of octave jumps (1 = stay put, 3 = +/- 1 octave)");
+             "OCTAVES - octave shift per phrase (1 = stay put, 3 = the phrase may lift an octave)");
     addKnob (mutate,  ids::mutate,  "MUTATE",
-             "MUTATE - how much the pattern evolves at the end of every cycle");
+             "MUTATE - how much the phrase evolves at the end of every cycle (one scale step at a time)");
     addKnob (swing,   ids::swing,   "SWING",
              "SWING - delays the off-beat steps for a shuffled feel");
     addKnob (gate,    ids::gate,    "GATE",
@@ -168,6 +168,12 @@ VesperaAudioProcessorEditor::VesperaAudioProcessorEditor (VesperaAudioProcessor&
     addAndMakeVisible (limiterButton);
     limiterAttach = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
         processorRef.apvts, ids::limiter, limiterButton);
+
+    chordsButton.setTooltip ("CHORDS - every step plays a chord from the selected scale "
+                             "instead of a single note");
+    addAndMakeVisible (chordsButton);
+    chordsAttach = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+        processorRef.apvts, ids::chords, chordsButton);
 
     playSyncButton.setTooltip ("PLAY SYNC - the generator only runs while the host transport "
                                "is playing, and stops when the DAW stops");
@@ -496,7 +502,7 @@ void VesperaAudioProcessorEditor::paint (juce::Graphics& g)
 
     g.setColour (findColour (VesperaLookAndFeel::textDimColourId));
     g.setFont (juce::Font (juce::FontOptions (11.5f)));
-    g.drawText ("MELODY IDEA GENERATOR",
+    g.drawText (" IDEA GENERATOR",
                 juce::roundToInt (encF.getX() + 36.0f), juce::roundToInt (encF.getY() + 56.0f),
                 380, 16, juce::Justification::centredLeft, false);
 
@@ -686,10 +692,12 @@ void VesperaAudioProcessorEditor::resized()
     {
         auto col = outArea.reduced (10, 8);
         col.removeFromTop (20);
-        auto bottom = col.removeFromBottom (26 + 8 + 26);
+        auto bottom = col.removeFromBottom (26 * 3 + 8 * 2);
         col.removeFromBottom (8);   // small gap above the checkboxes
         placeGrid ({ &output }, col, 1);
         limiterButton.setBounds (bottom.removeFromTop (26));
+        bottom.removeFromTop (8);
+        chordsButton.setBounds (bottom.removeFromTop (26));
         bottom.removeFromTop (8);
         playSyncButton.setBounds (bottom.removeFromTop (26));
     }

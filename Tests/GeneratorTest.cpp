@@ -9,6 +9,7 @@
 #include <cmath>
 
 #include "../Source/dsp/Scale.h"
+#include "../Source/dsp/Chord.h"
 #include "../Source/dsp/NotePool.h"
 #include "../Source/dsp/PatternEngine.h"
 #include "../Source/dsp/Character.h"
@@ -112,7 +113,7 @@ int main()
         p.mutate = 0.5f;
 
         juce::Random rng (1234);
-        pattern.regenerate (3, p, rng);
+        pattern.regenerate (poolNotes, 3, p, rng);
 
         bool allActive = true;
         bool allFromPool = true;
@@ -137,7 +138,7 @@ int main()
 
         // Density 0 must produce an empty pattern.
         p.density = 0.0f;
-        pattern.regenerate (3, p, rng);
+        pattern.regenerate (poolNotes, 3, p, rng);
         bool empty = true;
         for (int i = 0; i < p.steps; ++i)
             if (pattern.getStep (i).active)
@@ -147,7 +148,7 @@ int main()
         p.density = 1.0f;
         p.contour = 0;                             // up
         p.mutate = 1.0f;
-        pattern.regenerate (3, p, rng);
+        pattern.regenerate (poolNotes, 3, p, rng);
 
         int before[vespera::PatternEngine::kMaxSteps] {};
         for (int i = 0; i < p.steps; ++i)
@@ -156,7 +157,7 @@ int main()
         bool mutated = false;
         for (int cycle = 0; cycle < 20 && ! mutated; ++cycle)
         {
-            pattern.mutate (3, p, rng);
+            pattern.mutate (poolNotes, 3, p, rng);
             for (int i = 0; i < p.steps; ++i)
                 if (pattern.getStep (i).poolIndex != before[i])
                     mutated = true;
@@ -359,15 +360,17 @@ int main()
 
         juce::Random rngA (99), rngB (99);
 
+        const int poolNotes[4] = { 60, 64, 67, 72 };   // C major
+
         p.contour = vespera::kContourUp;
-        pattern.regenerate (4, p, rngA);
+        pattern.regenerate (poolNotes, 4, p, rngA);
 
         int forward[8] {};
         for (int i = 0; i < p.steps; ++i)
             forward[i] = pattern.getStep (i).poolIndex;
 
         p.contour = vespera::kContourReverse;
-        pattern.regenerate (4, p, rngB);
+        pattern.regenerate (poolNotes, 4, p, rngB);
 
         bool mirrored = true;
         for (int i = 0; i < p.steps; ++i)
@@ -587,6 +590,229 @@ int main()
         {
             ++failures;
             std::cout << "FAIL: pattern rate table is wrong" << std::endl;
+        }
+    }
+
+    // --- (11) diatonic chords ------------------------------------------------
+    {
+        bool inScale = true;
+        bool ascending = true;
+        bool rootPresent = true;
+        bool inRange = true;
+        bool seventhRule = true;
+        int maxCount = 0;
+
+        for (int key = 0; key < 12; ++key)
+        {
+            for (int scale = 0; scale < 10; ++scale)
+            {
+                const int degrees = (int) vespera::Scale::getIntervals (scale).size();
+
+                for (int root = 24; root < 108; root += 5)
+                {
+                    const int q = vespera::Scale::quantize (root, key, scale);
+
+                    for (int mask : { 0x7, 0xF, 0x17, 0x1F })
+                    {
+                        for (int inversion = 0; inversion < 4; ++inversion)
+                        {
+                            const auto chord = vespera::buildChord (q, key, scale, mask, inversion);
+                            maxCount = juce::jmax (maxCount, chord.count);
+
+                            if (chord.count < 1)
+                                rootPresent = false;
+
+                            bool hasRoot = false;
+
+                            for (int i = 0; i < chord.count; ++i)
+                            {
+                                if (chord.notes[i] < 0 || chord.notes[i] > 127)
+                                    inRange = false;
+
+                                if (! vespera::Scale::isInScale (chord.notes[i], key, scale))
+                                    inScale = false;
+
+                                if (i > 0 && chord.notes[i] <= chord.notes[i - 1])
+                                    ascending = false;
+
+                                if (chord.notes[i] % 12 == q % 12)
+                                    hasRoot = true;
+                            }
+
+                            if (! hasRoot)
+                                rootPresent = false;
+
+                            if (degrees < 7 && chord.count > 3)
+                                seventhRule = false;
+                        }
+                    }
+                }
+            }
+        }
+
+        std::cout << "chords: inScale=" << (inScale ? "yes" : "NO")
+                  << " ascending=" << ascending
+                  << " root=" << rootPresent
+                  << " range=" << inRange
+                  << " maxCount=" << maxCount
+                  << " seventhRule=" << seventhRule << std::endl;
+
+        if (! (inScale && ascending && rootPresent && inRange && seventhRule))
+        {
+            ++failures;
+            std::cout << "FAIL: chord voicing is not diatonic / ordered / in range" << std::endl;
+        }
+    }
+
+    // --- (12) phrase structure ----------------------------------------------
+    {
+        // Stable degrees: tonic, third and fifth of the selected scale.
+        auto isStable = [] (int note, int key, int scale)
+        {
+            const auto& intervals = vespera::Scale::getIntervals (scale);
+            const int n = (int) intervals.size();
+            const int pc = ((note - key) % 12 + 12) % 12;
+
+            for (int i = 0; i < n; ++i)
+                if (intervals[(size_t) i] == pc)
+                {
+                    if (n >= 12) return i == 0 || i == 4 || i == 7;
+                    if (n == 5)  return i == 0 || i == 2;
+                    return i == 0 || i == 2 || i == 4;
+                }
+
+            return false;
+        };
+
+        const int pool[5] = { 60, 62, 63, 67, 69 };   // C minor colour
+        const int key = 0, scale = 1;
+
+        bool leapsBounded = true;
+        bool cadenceOk = true;
+        bool repeatsMotif = true;
+        bool registerPerSection = true;
+
+        for (int seed = 1; seed <= 40; ++seed)
+        {
+            vespera::PatternEngine engine;
+            vespera::PatternParams p;
+            p.steps = 16;
+            p.density = 0.8f;
+            p.octaves = 2;
+            p.contour = 2;
+            p.key = key;
+            p.scale = scale;
+
+            juce::Random rng (seed);
+            engine.regenerate (pool, 5, p, rng);
+
+            int prev = -1;
+            int prevSection = -1;
+            int lastActive = -1;
+            int lastOctave[4] = { -2, -2, -2, -2 };
+
+            for (int i = 0; i < p.steps; ++i)
+            {
+                const auto& s = engine.getStep (i);
+
+                const int section = i / 4;
+                if (s.active)
+                {
+                    if (lastOctave[section] == -2)
+                        lastOctave[section] = s.octave;
+                    else if (lastOctave[section] != s.octave)
+                        registerPerSection = false;
+                }
+
+                if (! s.active)
+                    continue;
+
+                const int note = pool[s.poolIndex] + 12 * s.octave;
+
+                // A register lift is allowed between phrases, never inside one.
+                if (prev >= 0 && section == prevSection && std::abs (note - prev) > 12)
+                    leapsBounded = false;
+
+                prev = note;
+                prevSection = section;
+                lastActive = i;
+            }
+
+            if (lastActive >= 0)
+            {
+                const auto& s = engine.getStep (lastActive);
+                if (! isStable (pool[s.poolIndex] + 12 * s.octave, key, scale))
+                    cadenceOk = false;
+            }
+
+            // A B A C: with 16 steps the third phrase is the motif again.
+            for (int i = 0; i < 4; ++i)
+                if (engine.getStep (8 + i).poolIndex != engine.getStep (i).poolIndex)
+                    repeatsMotif = false;
+        }
+
+        // One sample figure, for a quick read of the shape.
+        vespera::PatternEngine sample;
+        vespera::PatternParams sp;
+        sp.steps = 8;
+        sp.density = 0.75f;
+        sp.octaves = 1;
+        sp.contour = 2;
+        sp.key = key;
+        sp.scale = scale;
+
+        juce::Random sampleRng (7);
+        sample.regenerate (pool, 5, sp, sampleRng);
+
+        std::cout << "phrase: ";
+        for (int i = 0; i < sp.steps; ++i)
+        {
+            const auto& s = sample.getStep (i);
+            if (s.active)
+                std::cout << vespera::Scale::noteName (pool[s.poolIndex] + 12 * s.octave) << " ";
+            else
+                std::cout << "- ";
+        }
+        std::cout << std::endl;
+
+        for (int contour = 0; contour < 6; ++contour)
+        {
+            for (int seed = 1; seed <= 3; ++seed)
+            {
+                vespera::PatternEngine e;
+                vespera::PatternParams q;
+                q.steps = 16;
+                q.density = 0.7f;
+                q.octaves = 2;
+                q.contour = contour;
+                q.key = key;
+                q.scale = scale;
+
+                juce::Random r (seed);
+                e.regenerate (pool, 5, q, r);
+
+                std::cout << "  [" << vespera::getContourNames()[contour] << " s" << seed << "] ";
+                for (int i = 0; i < q.steps; ++i)
+                {
+                    const auto& s = e.getStep (i);
+                    if (s.active)
+                        std::cout << vespera::Scale::noteName (pool[s.poolIndex] + 12 * s.octave) << " ";
+                    else
+                        std::cout << ". ";
+                }
+                std::cout << std::endl;
+            }
+        }
+
+        std::cout << "phrase: leaps=" << leapsBounded
+                  << " cadence=" << cadenceOk
+                  << " repeats=" << repeatsMotif
+                  << " register=" << registerPerSection << std::endl;
+
+        if (! (leapsBounded && cadenceOk && repeatsMotif && registerPerSection))
+        {
+            ++failures;
+            std::cout << "FAIL: generated phrase is not structured like music" << std::endl;
         }
     }
 

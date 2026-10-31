@@ -21,7 +21,9 @@ namespace vespera
 class PolySynth
 {
 public:
-    static constexpr int kMaxVoices = 16;
+    // 24 voices leave enough headroom for triads / seventh chords with a long
+    // release, so a sustained chord is not immediately eaten by voice stealing.
+    static constexpr int kMaxVoices = 24;
 
     void prepare (double sampleRate)
     {

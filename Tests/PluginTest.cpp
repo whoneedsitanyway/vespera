@@ -314,6 +314,11 @@ int main()
             VesperaAudioProcessor proc;
             proc.setPlayConfigDetails (0, 2, 48000.0, 512);
 
+            // The figure now depends on the random state (motif variations), so
+            // both instances have to start from the same one for the mirror
+            // comparison to mean anything.
+            proc.seedRandomForTests (4242);
+
             setParam (proc, "key", 0.0f);          // C
             setParam (proc, "scale", 0.0f);        // major
             setParam (proc, "poolSize", 4.0f);
@@ -843,6 +848,123 @@ int main()
         }
     }
 
+    // --- (1h) chords ---------------------------------------------------------
+    {
+        struct ChordRender
+        {
+            int maxVoices = 0;
+            int noteOns = 0;
+            vespera::PatternView view;
+        };
+
+        auto renderWithChords = [] (float chords)
+        {
+            const double sr = 48000.0;
+            const int block = 512;
+
+            VesperaAudioProcessor proc;
+            proc.setPlayConfigDetails (0, 2, sr, block);
+
+            setParam (proc, "key", 0.0f);          // C
+            setParam (proc, "scale", 1.0f);        // minor
+            setParam (proc, "poolSize", 4.0f);
+            setParam (proc, "steps", 4.0f);
+            setParam (proc, "density", 1.0f);
+            setParam (proc, "octaves", 1.0f);
+            setParam (proc, "mutate", 0.0f);
+            setParam (proc, "rate", 3.0f);         // 1/8
+            setParam (proc, "gate", 0.5f);
+            setParam (proc, "release", 0.8f);
+            setParam (proc, "chords", chords);
+            proc.prepareToPlay (sr, block);
+
+            juce::AudioBuffer<float> buffer (2, block);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 0);
+            midi.addEvent (juce::MidiMessage::noteOn (1, 63, 0.8f), 0);
+            midi.addEvent (juce::MidiMessage::noteOn (1, 67, 0.8f), 0);
+
+            ChordRender result;
+
+            for (int b = 0; b < 40; ++b)
+            {
+                buffer.clear();
+                proc.processBlock (buffer, midi);
+                midi.clear();
+                result.maxVoices = juce::jmax (result.maxVoices, proc.getActiveVoiceCount());
+            }
+
+            proc.getPatternView (result.view);
+
+            auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                            .getChildFile (chords > 0.5f ? "vespera_chords_on.mid"
+                                                        : "vespera_chords_off.mid");
+            file.deleteFile();
+
+            if (proc.writePatternMidiFile (file))
+            {
+                juce::FileInputStream in (file);
+                if (in.openedOk())
+                {
+                    juce::MidiFile mf;
+                    if (mf.readFrom (in) && mf.getNumTracks() == 1)
+                    {
+                        const auto* track = mf.getTrack (0);
+                        for (int i = 0; i < track->getNumEvents(); ++i)
+                            if (track->getEventPointer (i)->message.isNoteOn())
+                                ++result.noteOns;
+                    }
+                }
+            }
+
+            file.deleteFile();
+            return result;
+        };
+
+        const auto off = renderWithChords (0.0f);
+        const auto on  = renderWithChords (1.0f);
+
+        bool masks = true;
+        bool inScale = true;
+        int minChordSize = 99;
+
+        for (int i = 0; i < on.view.steps; ++i)
+        {
+            if (! on.view.active[i])
+                continue;
+
+            if (on.view.chordMask[i] == 0)
+                masks = false;
+
+            const auto chord = vespera::buildChord (on.view.note[i], on.view.key,
+                                                    on.view.scale,
+                                                    on.view.chordMask[i],
+                                                    on.view.chordInversion[i]);
+            minChordSize = juce::jmin (minChordSize, chord.count);
+
+            for (int c = 0; c < chord.count; ++c)
+                if (! vespera::Scale::isInScale (chord.notes[c],
+                                                 on.view.key, on.view.scale))
+                    inScale = false;
+        }
+
+        std::cout << "chords: offVoices=" << off.maxVoices
+                  << " onVoices=" << on.maxVoices
+                  << " minChord=" << minChordSize
+                  << " masks=" << masks
+                  << " inScale=" << (inScale ? "yes" : "NO")
+                  << " midiOff=" << off.noteOns
+                  << " midiOn=" << on.noteOns << std::endl;
+
+        if (! (on.maxVoices > off.maxVoices && on.maxVoices >= 3
+               && minChordSize >= 3 && masks && inScale
+               && on.noteOns > off.noteOns))
+        {
+            ++failures;
+            std::cout << "FAIL: Chords did not produce an in-scale polyphonic harmony" << std::endl;
+        }
+    }
+
     // --- (2) factory presets -------------------------------------------------
     {
         auto tmpDir = juce::File::getSpecialLocation (juce::File::tempDirectory)
@@ -1192,6 +1314,70 @@ int main()
         {
             ++failures;
             std::cout << "FAIL: limiter checkbox is missing from OUTPUT" << std::endl;
+        }
+    }
+
+    // --- (7b) Chords checkbox lives in OUTPUT next to Limiter / Play Sync ----
+    {
+        VesperaAudioProcessor proc;
+        proc.setPlayConfigDetails (0, 2, 48000.0, 512);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+
+        juce::Button* chordsButton = nullptr;
+        juce::Button* limiterButton = nullptr;
+        juce::Button* playSyncButton = nullptr;
+
+        std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+        {
+            for (auto* child : c.getChildren())
+            {
+                if (auto* b = dynamic_cast<juce::Button*> (child))
+                {
+                    if (b->getButtonText() == "Chords")    chordsButton = b;
+                    if (b->getButtonText() == "Limiter")   limiterButton = b;
+                    if (b->getButtonText() == "Play Sync") playSyncButton = b;
+                }
+                walk (*child);
+            }
+        };
+        walk (*editor);
+
+        const bool found = chordsButton != nullptr && limiterButton != nullptr
+                        && playSyncButton != nullptr;
+
+        bool placed = false;
+        bool togglesParam = false;
+
+        if (found)
+        {
+            const auto r = chordsButton->getBounds();
+            const auto lim = limiterButton->getBounds();
+            const auto sync = playSyncButton->getBounds();
+
+            placed = chordsButton->isVisible()
+                  && r.getWidth() > 20 && r.getHeight() > 12
+                  && r.getY() > lim.getBottom()
+                  && r.getY() < sync.getY()
+                  && ! r.intersects (lim)
+                  && ! r.intersects (sync)
+                  && r.getX() >= lim.getX();
+
+            const bool offByDefault = ! chordsButton->getToggleState();
+            chordsButton->setToggleState (true, juce::sendNotificationSync);
+            togglesParam = offByDefault
+                        && getParam (proc, "chords") > 0.5f
+                        && chordsButton->getToggleState();
+        }
+
+        std::cout << "chords ui: found=" << found
+                  << " placed=" << placed
+                  << " toggles=" << togglesParam << std::endl;
+
+        if (! (found && placed && togglesParam))
+        {
+            ++failures;
+            std::cout << "FAIL: Chords checkbox is missing / misplaced in OUTPUT" << std::endl;
         }
     }
 

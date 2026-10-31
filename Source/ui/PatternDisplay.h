@@ -32,6 +32,7 @@ private:
     VesperaAudioProcessor& proc;
     PatternView view;
     bool haveView = false;
+    bool chords = false;
     int  lastVoices = -1;
     int  lastBpm    = -1;
 

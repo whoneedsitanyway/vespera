@@ -27,12 +27,15 @@ void PatternDisplay::timerCallback()
     // repaint of the panel is wasted work while the generator is idle.
     const int voices = proc.getActiveVoiceCount();
     const int bpm = juce::roundToInt (proc.getDisplayBpm());
+    const bool chordsOn = proc.apvts.getRawParameterValue (ids::chords)->load() > 0.5f;
 
-    if (haveView && voices == lastVoices && bpm == lastBpm && sameView (view, fresh))
+    if (haveView && voices == lastVoices && bpm == lastBpm
+        && chordsOn == chords && sameView (view, fresh))
         return;
 
     view = fresh;
     haveView = true;
+    chords = chordsOn;
     lastVoices = voices;
     lastBpm = bpm;
     repaint();
@@ -54,6 +57,8 @@ bool PatternDisplay::sameView (const PatternView& a, const PatternView& b)
 
     for (int i = 0; i < PatternEngine::kMaxSteps; ++i)
         if (a.active[i] != b.active[i] || a.note[i] != b.note[i]
+            || a.chordMask[i] != b.chordMask[i]
+            || a.chordInversion[i] != b.chordInversion[i]
             || std::abs (a.velocity[i] - b.velocity[i]) > 1.0e-6f)
             return false;
 
@@ -152,16 +157,49 @@ void PatternDisplay::paint (juce::Graphics& g)
         if (active)
         {
             const int note = view.note[slot];
-            const float norm = juce::jlimit (0.0f, 1.0f, (float) (note - 36) / 48.0f);
-            const float barH = juce::jmax (6.0f, content.getHeight() * (0.18f + norm * 0.72f));
 
-            auto bar = content.removeFromBottom (barH).reduced (2.0f, 0.0f);
             juce::Colour barColour = current ? accent : cool.withAlpha (0.55f);
             if (view.velocity[slot] > 0.9f)
                 barColour = hot.withAlpha (current ? 0.95f : 0.6f);
 
-            g.setColour (barColour);
-            g.fillRoundedRectangle (bar, 3.0f);
+            if (chords)
+            {
+                const auto chord = buildChord (note, view.key, view.scale,
+                                               view.chordMask[slot], view.chordInversion[slot]);
+
+                // A translucent block spans the whole voicing; each chord tone
+                // is a brighter line, so the shape of the chord is readable at
+                // a glance without hiding the pitch of the root.
+                const int top = chord.count > 0 ? chord.notes[chord.count - 1] : note;
+                const float topNorm = juce::jlimit (0.0f, 1.0f, (float) (top - 36) / 48.0f);
+                const float barH = juce::jmax (6.0f, content.getHeight() * (0.18f + topNorm * 0.72f));
+
+                const float bottomY = content.getBottom();
+                const float height = content.getHeight();
+
+                auto bar = content.removeFromBottom (barH).reduced (2.0f, 0.0f);
+                g.setColour (barColour.withAlpha (0.28f));
+                g.fillRoundedRectangle (bar, 3.0f);
+
+                for (int c = 0; c < chord.count; ++c)
+                {
+                    const float norm = juce::jlimit (0.0f, 1.0f,
+                                                     (float) (chord.notes[c] - 36) / 48.0f);
+                    const float y = bottomY - height * (0.18f + norm * 0.72f);
+                    juce::Rectangle<float> line (bar.getX(), y - 1.0f, bar.getWidth(), 2.0f);
+                    g.setColour (barColour);
+                    g.fillRoundedRectangle (line, 1.0f);
+                }
+            }
+            else
+            {
+                const float norm = juce::jlimit (0.0f, 1.0f, (float) (note - 36) / 48.0f);
+                const float barH = juce::jmax (6.0f, content.getHeight() * (0.18f + norm * 0.72f));
+
+                auto bar = content.removeFromBottom (barH).reduced (2.0f, 0.0f);
+                g.setColour (barColour);
+                g.fillRoundedRectangle (bar, 3.0f);
+            }
 
             g.setColour (current ? juce::Colours::white : textDim.withAlpha (0.85f));
             g.setFont (juce::Font (juce::FontOptions (8.5f)));
@@ -203,6 +241,7 @@ void PatternDisplay::paint (juce::Graphics& g)
                     + "   |   " + rateName
                     + "   |   " + contourName
                     + "   |   density " + juce::String (densityPercent) + "%"
+                    + (chords ? "   |   chords" : "")
                     + "   |   " + stateText,
                 footer, juce::Justification::centredLeft, false);
 }

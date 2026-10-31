@@ -75,13 +75,14 @@ Source/
   PluginProcessor.h/.cpp      процессор: параметры, секвенция, цепь, randomize, MIDI-экспорт
   PluginEditor.h/.cpp         UI: секции, раскладка, привязки, тема, COMPACT, MIDI-drag
   PresetManager.h             файловые пресеты (save/load XML-состояния APVTS)
-  FactoryPresets.h            вшитые заводские пресеты (XML-строки, версия 7)
+  FactoryPresets.h            вшитые заводские пресеты (XML-строки, версия 8)
   DebugLogger.h/.cpp          «чёрный ящик»: снапшоты уровней, аномалии, лог-файл
   dsp/
     Scale.h                   лады, квантование, транспозиция по ступеням
+    Chord.h                   диатонические аккорды из ступеней лада
     NotePool.h                пул последних нот + Latch
-    PatternEngine.h           генератор паттернов (контуры, density, mutate)
-    PolySynth.h               полисинтез (16 голосов, 2 осциллятора, PolyBLEP, ADSR)
+    PatternEngine.h           генератор паттернов (контуры, density, mutate, chord mask)
+    PolySynth.h               полисинтез (24 голоса, 2 осциллятора, PolyBLEP, ADSR)
     ResonantFilter.h          TPT state-variable фильтр (LP/BP/HP) + env follower
     Lfo.h                   источник модуляции (7 форм, free/sync)
     Character.h               drive / crush / noise / wow / fold / ring
@@ -119,11 +120,13 @@ done
 - `VesperaGeneratorTest` — квантование всегда попадает в ступень лада; пул
   держит последние ноты и слушает `latch`; паттерн использует только ноты пула
   и остаётся в ладу; `density = 0` даёт тишину; `mutate` эволюционирует;
-  reverse-контур зеркалится; character (шум гейтится, crush меняет сигнал,
-  fold/ring ограничены); LFO в диапазоне и varies; лимитер держит горячий
-  вход и не трогает тихий; таблица `rate` согласована с именами.
+  reverse-контур зеркалится; структура фразы (мотив A B A C повторяется,
+  скачки ограничены, каденция на устойчивой ступени, октава на секцию);
+  аккорды диатоничны и упорядочены; character (шум гейтится, crush меняет
+  сигнал, fold/ring ограничены); LFO в диапазоне и varies; лимитер держит
+  горячий вход и не трогает тихий; таблица `rate` согласована с именами.
 - `VesperaSynthTest` — ноты звучат и уходят в тишину; экстремальные настройки
-  конечны и ограничены; voice stealing не превышает 16 голосов.
+  конечны и ограничены; voice stealing не превышает 24 голоса.
 - `VesperaPluginTest` — реальный процессор: генерация audible/ограниченного
   звука, реквантование при смене Key, транспозиция по ступеням, reverse в
   дисплее, CLEAR, RANDOM (не трогает `mutate`/`noise`, всегда audible,

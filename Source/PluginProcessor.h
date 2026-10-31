@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "dsp/Scale.h"
+#include "dsp/Chord.h"
 #include "dsp/NotePool.h"
 #include "dsp/PatternEngine.h"
 #include "dsp/PolySynth.h"
@@ -71,6 +72,7 @@ namespace vespera
         // Output.
         static constexpr const char* output  = "output";
         static constexpr const char* limiter = "limiter";
+        static constexpr const char* chords  = "chords";
         static constexpr const char* transportSync = "transportSync";
     }
 
@@ -85,6 +87,8 @@ namespace vespera
         bool active[PatternEngine::kMaxSteps] {};
         int  note[PatternEngine::kMaxSteps] {};
         float velocity[PatternEngine::kMaxSteps] {};
+        juce::uint8 chordMask[PatternEngine::kMaxSteps] {};
+        juce::uint8 chordInversion[PatternEngine::kMaxSteps] {};
         int  key = 0;
         int  scale = 1;
         int  transpose = 0;
@@ -164,6 +168,12 @@ public:
     const juce::String& getLastPresetName() const noexcept { return lastPresetName; }
     void setLastPresetName (const juce::String& n) { lastPresetName = n; }
 
+   #if VESPERA_TEST_BUILD
+    // Offline tests compare two instances (e.g. the UP and REVERSE contours), so
+    // they need the generator to start from the same random state.
+    void seedRandomForTests (juce::int64 seed) { rng.setSeed (seed); }
+   #endif
+
     juce::AudioProcessorValueTreeState apvts;
 
 private:
@@ -215,6 +225,7 @@ private:
 
         std::atomic<float>* output = nullptr;
         std::atomic<float>* limiter = nullptr;
+        std::atomic<float>* chords = nullptr;
         std::atomic<float>* transportSync = nullptr;
     };
 

@@ -83,6 +83,7 @@ void VesperaAudioProcessor::bindRawParams()
 
     rawParams.output  = bind (ids::output);
     rawParams.limiter = bind (ids::limiter);
+    rawParams.chords  = bind (ids::chords);
     rawParams.transportSync = bind (ids::transportSync);
 }
 
@@ -197,6 +198,9 @@ APVTS::ParameterLayout VesperaAudioProcessor::createParameterLayout()
     // --- Output --------------------------------------------------------------
     addFloat (ids::output, "Output", -24.0f, 12.0f, 0.0f, "dB", 1);
     addBool  (ids::limiter, "Limiter", true);
+
+    // Every step plays a chord from the selected scale instead of a single note.
+    addBool  (ids::chords, "Chords", false);
 
     // Follows the host transport: the generator only runs while the DAW plays.
     // Hosts (and the standalone app) that report no transport keep free-running.
@@ -418,6 +422,8 @@ vespera::PatternParams VesperaAudioProcessor::currentPatternParams() const
     pp.gate    = rawParams.gate->load();
     pp.swing   = rawParams.swing->load();
     pp.accent  = rawParams.accent->load();
+    pp.key     = (int) rawParams.key->load();
+    pp.scale   = (int) rawParams.scale->load();
     return pp;
 }
 
@@ -452,7 +458,7 @@ double VesperaAudioProcessor::triggerStep (double samplesPerStep, float gate, fl
 
     if (patternDirty || pattern.getLength() != pp.steps)
     {
-        pattern.regenerate (n, pp, rng);
+        pattern.regenerate (poolNotes, n, pp, rng);
         patternDirty = false;
         if (currentStep >= pattern.getLength())
             currentStep = 0;
@@ -462,6 +468,7 @@ double VesperaAudioProcessor::triggerStep (double samplesPerStep, float gate, fl
     const int transpose = (int) rawParams.transpose->load();
     const int key = (int) rawParams.key->load();
     const int scale = (int) rawParams.scale->load();
+    const bool chordsOn = rawParams.chords->load() > 0.5f;
 
     if (n > 0)
     {
@@ -470,10 +477,26 @@ double VesperaAudioProcessor::triggerStep (double samplesPerStep, float gate, fl
         {
             const int baseNote = poolNotes[juce::jlimit (0, n - 1, step.poolIndex)]
                                      + 12 * step.octave;
-            const int note = juce::jlimit (0, 127,
+            const int root = juce::jlimit (0, 127,
                                            Scale::transposeDegrees (baseNote, transpose, key, scale));
             const int duration = juce::jmax (1, (int) (samplesPerStep * gate));
-            synth.noteOnTimed (note, step.velocity, duration);
+
+            if (chordsOn)
+            {
+                // The chord is built from scale degrees, so every note stays in
+                // key.  Equal-power scaling keeps a triad from jumping ~10 dB
+                // louder than the single-note pattern.
+                const auto chord = buildChord (root, key, scale,
+                                               step.chordMask, step.chordInversion);
+                const float voiceGain = 1.0f / std::sqrt ((float) juce::jmax (1, chord.count));
+
+                for (int i = 0; i < chord.count; ++i)
+                    synth.noteOnTimed (chord.notes[i], step.velocity * voiceGain, duration);
+            }
+            else
+            {
+                synth.noteOnTimed (root, step.velocity, duration);
+            }
         }
     }
 
@@ -482,7 +505,7 @@ double VesperaAudioProcessor::triggerStep (double samplesPerStep, float gate, fl
     currentStep = (currentStep + 1) % pattern.getLength();
 
     if (currentStep == 0 && pp.mutate > 0.001f)
-        pattern.mutate (n, pp, rng);
+        pattern.mutate (poolNotes, n, pp, rng);
 
     const double factor = (triggeredStep % 2 == 1) ? (1.0 + swing * 0.5)
                                                    : (1.0 - swing * 0.5);
@@ -515,6 +538,8 @@ void VesperaAudioProcessor::updatePatternView (const int* poolNotes, int poolSiz
         const auto& s = pattern.getStep (i);
         v.active[i] = (i < v.steps) && s.active;
         v.velocity[i] = s.velocity;
+        v.chordMask[i] = s.chordMask;
+        v.chordInversion[i] = s.chordInversion;
         v.note[i] = (v.active[i] && v.poolSize > 0)
                         ? juce::jlimit (0, 127,
                                         vespera::Scale::transposeDegrees (
@@ -652,7 +677,7 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         int notes[NotePool::kMaxNotes] {};
         const int n = notePool.getSorted (notes, poolSize);
 
-        pattern.regenerate (n, currentPatternParams(), rng);
+        pattern.regenerate (notes, n, currentPatternParams(), rng);
         currentStep = 0;
         patternDirty = false;
         updatePatternView (notes, n);
@@ -1118,6 +1143,7 @@ bool VesperaAudioProcessor::writePatternMidiFile (const juce::File& destination)
     const double stepTicks = juce::jmax (1.0, beatsPerStep * (double) ticksPerQuarter);
     const float  gate = rawParams.gate->load();
     const float  swing = rawParams.swing->load();
+    const bool   chordsOn = rawParams.chords->load() > 0.5f;
     const double bpm = juce::jlimit (20.0f, 300.0f, displayBpm.load (std::memory_order_relaxed));
 
     juce::MidiMessageSequence seq;
@@ -1137,10 +1163,34 @@ bool VesperaAudioProcessor::writePatternMidiFile (const juce::File& destination)
 
         if (v.active[i] && v.note[i] >= 0)
         {
+            int notes[4] {};
+            int count = 0;
+
+            if (chordsOn)
+            {
+                const auto chord = buildChord (v.note[i], v.key, v.scale,
+                                               v.chordMask[i], v.chordInversion[i]);
+                count = chord.count;
+                for (int c = 0; c < count; ++c)
+                    notes[c] = chord.notes[c];
+            }
+            else
+            {
+                notes[0] = v.note[i];
+                count = 1;
+            }
+
+            // Match the synth's equal-power chord level, so the exported clip
+            // sounds like what the plugin plays.
+            const float velocity = v.velocity[i] / std::sqrt ((float) juce::jmax (1, count));
             const double length = juce::jlimit (1.0, juce::jmax (1.0, interval * 0.98),
                                                 stepTicks * (double) gate);
-            seq.addEvent (juce::MidiMessage::noteOn (1, v.note[i], v.velocity[i]), t);
-            seq.addEvent (juce::MidiMessage::noteOff (1, v.note[i]), t + length);
+
+            for (int c = 0; c < count; ++c)
+            {
+                seq.addEvent (juce::MidiMessage::noteOn (1, notes[c], velocity), t);
+                seq.addEvent (juce::MidiMessage::noteOff (1, notes[c]), t + length);
+            }
         }
 
         t += interval;

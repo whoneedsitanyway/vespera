@@ -12,7 +12,7 @@
 //==============================================================================
 namespace vespera::factory
 {
-    inline constexpr int kFactoryPresetVersion = 7;
+    inline constexpr int kFactoryPresetVersion = 8;
 
     struct Preset
     {
@@ -28,6 +28,7 @@ namespace vespera::factory
 <PARAMETERS presetName="First Light">
   <PARAM id="accent" value="0.3"/>
   <PARAM id="attack" value="0.005"/>
+  <PARAM id="chords" value="0.0"/>
   <PARAM id="contour" value="2.0"/>
   <PARAM id="crush" value="0.0"/>
   <PARAM id="decay" value="0.25"/>
@@ -73,6 +74,7 @@ namespace vespera::factory
 <PARAMETERS presetName="Rain Arp">
   <PARAM id="accent" value="0.4"/>
   <PARAM id="attack" value="0.002"/>
+  <PARAM id="chords" value="0.0"/>
   <PARAM id="contour" value="0.0"/>
   <PARAM id="crush" value="0.0"/>
   <PARAM id="decay" value="0.12"/>
@@ -118,6 +120,7 @@ namespace vespera::factory
 <PARAMETERS presetName="Broken Music Box">
   <PARAM id="accent" value="0.25"/>
   <PARAM id="attack" value="0.004"/>
+  <PARAM id="chords" value="0.0"/>
   <PARAM id="contour" value="4.0"/>
   <PARAM id="crush" value="0.25"/>
   <PARAM id="decay" value="0.35"/>
@@ -163,6 +166,7 @@ namespace vespera::factory
 <PARAMETERS presetName="Deep Pulse">
   <PARAM id="accent" value="0.5"/>
   <PARAM id="attack" value="0.01"/>
+  <PARAM id="chords" value="0.0"/>
   <PARAM id="contour" value="1.0"/>
   <PARAM id="crush" value="0.0"/>
   <PARAM id="decay" value="0.4"/>
@@ -208,6 +212,7 @@ namespace vespera::factory
 <PARAMETERS presetName="Glass Steps">
   <PARAM id="accent" value="0.2"/>
   <PARAM id="attack" value="0.01"/>
+  <PARAM id="chords" value="0.0"/>
   <PARAM id="contour" value="2.0"/>
   <PARAM id="crush" value="0.0"/>
   <PARAM id="decay" value="0.5"/>
@@ -253,6 +258,7 @@ namespace vespera::factory
 <PARAMETERS presetName="Tape Lullaby">
   <PARAM id="accent" value="0.15"/>
   <PARAM id="attack" value="0.08"/>
+  <PARAM id="chords" value="0.0"/>
   <PARAM id="contour" value="0.0"/>
   <PARAM id="crush" value="0.08"/>
   <PARAM id="decay" value="0.6"/>
@@ -298,6 +304,7 @@ namespace vespera::factory
 <PARAMETERS presetName="Acid Walk">
   <PARAM id="accent" value="0.6"/>
   <PARAM id="attack" value="0.002"/>
+  <PARAM id="chords" value="0.0"/>
   <PARAM id="contour" value="4.0"/>
   <PARAM id="crush" value="0.0"/>
   <PARAM id="decay" value="0.18"/>
@@ -343,6 +350,7 @@ namespace vespera::factory
 <PARAMETERS presetName="Frozen Motif">
   <PARAM id="accent" value="0.2"/>
   <PARAM id="attack" value="0.2"/>
+  <PARAM id="chords" value="0.0"/>
   <PARAM id="contour" value="3.0"/>
   <PARAM id="crush" value="0.0"/>
   <PARAM id="decay" value="0.8"/>
