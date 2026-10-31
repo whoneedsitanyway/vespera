@@ -40,19 +40,45 @@ inline ChordVoicing buildChord (int root, int key, int scaleIndex,
 
     tones[count++] = juce::jlimit (0, 127, root);
 
+    // The diatonic third and fifth are not always at +2 / +4 degrees: the
+    // pentatonic scales skip the fourth, so their third sits on degree +1
+    // (minor) or +2 (major), and the fifth on degree +3.  Finding the degrees
+    // by their interval keeps every scale voiced as a real triad.
+    int thirdDegree = 2;
+    int fifthDegree = 4;
+
+    if (! chromatic)
+    {
+        bool foundThird = false, foundFifth = false;
+
+        for (int i = 1; i < degrees; ++i)
+        {
+            if (! foundThird && (intervals[(size_t) i] == 3 || intervals[(size_t) i] == 4))
+            {
+                thirdDegree = i;
+                foundThird = true;
+            }
+
+            if (! foundFifth && intervals[(size_t) i] == 7)
+            {
+                fifthDegree = i;
+                foundFifth = true;
+            }
+        }
+    }
+
     // Third.  On the diatonic and pentatonic scales the chord is built from
     // scale degrees, so every voicing is in key by construction.  The
     // chromatic scale has no diatonic thirds, so a major or minor third is
     // used instead (the minor colour is carried by bit 0x10).
     if ((mask & 0x2) != 0)
         tones[count++] = chromatic ? root + (((mask & 0x10) != 0) ? 3 : 4)
-                                   : Scale::transposeDegrees (root, 2, key, scaleIndex);
+                                   : Scale::transposeDegrees (root, thirdDegree, key, scaleIndex);
 
-    // Fifth.  In the pentatonic modes degree +4 is a sixth, which keeps the
-    // chord open instead of turning it into a stack of seconds.
+    // Fifth.
     if ((mask & 0x4) != 0)
         tones[count++] = chromatic ? root + 7
-                                   : Scale::transposeDegrees (root, 4, key, scaleIndex);
+                                   : Scale::transposeDegrees (root, fifthDegree, key, scaleIndex);
 
     // Seventh: only where the scale actually has one.  In the pentatonic modes
     // degree +6 would wrap into a second, so the bit is ignored there.

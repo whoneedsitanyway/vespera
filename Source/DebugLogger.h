@@ -69,8 +69,6 @@ public:
 
     bool hasAnomaly() const noexcept { return anomalyCount.load (std::memory_order_relaxed) > 0; }
 
-    void clearAnomaly() noexcept { anomalyCount.store (0, std::memory_order_relaxed);
-                                   lastFlags.store (0, std::memory_order_relaxed); }
     void clearLog();
 
     static juce::String describeFlags (unsigned flags);
@@ -102,8 +100,6 @@ private:
     int      suppressedSinceLastLog = 0;
 
     std::atomic<int>      anomalyCount   { 0 };
-    std::atomic<unsigned> lastFlags      { 0 };
-    std::atomic<double>   lastAnomalySec { 0.0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (DebugLogger)
 };

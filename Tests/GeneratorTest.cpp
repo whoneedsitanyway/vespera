@@ -666,22 +666,26 @@ int main()
 
     // --- (12) phrase structure ----------------------------------------------
     {
-        // Stable degrees: tonic, third and fifth of the selected scale.
+        // Stable degrees: tonic, third and fifth of the selected scale, found by
+        // interval (in the pentatonic modes the third is not the third degree).
         auto isStable = [] (int note, int key, int scale)
         {
             const auto& intervals = vespera::Scale::getIntervals (scale);
             const int n = (int) intervals.size();
             const int pc = ((note - key) % 12 + 12) % 12;
 
+            bool inScale = false;
             for (int i = 0; i < n; ++i)
                 if (intervals[(size_t) i] == pc)
-                {
-                    if (n >= 12) return i == 0 || i == 4 || i == 7;
-                    if (n == 5)  return i == 0 || i == 2;
-                    return i == 0 || i == 2 || i == 4;
-                }
+                    inScale = true;
 
-            return false;
+            if (! inScale)
+                return false;
+
+            if (n >= 12)
+                return pc == 0 || pc == 4 || pc == 7;
+
+            return pc == 0 || pc == 3 || pc == 4 || pc == 7;
         };
 
         const int pool[5] = { 60, 62, 63, 67, 69 };   // C minor colour
@@ -813,6 +817,140 @@ int main()
         {
             ++failures;
             std::cout << "FAIL: generated phrase is not structured like music" << std::endl;
+        }
+    }
+
+    // --- (13) pentatonic harmony --------------------------------------------
+    {
+        // In the pentatonic modes the third is not the third degree, so both the
+        // chord builder and the cadence have to find it by interval.
+        const int pool[5] = { 60, 63, 65, 67, 70 };   // C minor pentatonic
+
+        const auto minorTriad = vespera::buildChord (60, 0, 8, 0x7, 0);
+        const auto majorTriad = vespera::buildChord (60, 0, 7, 0x7, 0);
+
+        const bool minorOk = minorTriad.count == 3
+                          && minorTriad.notes[1] - minorTriad.notes[0] == 3
+                          && minorTriad.notes[2] - minorTriad.notes[0] == 7;
+        const bool majorOk = majorTriad.count == 3
+                          && majorTriad.notes[1] - majorTriad.notes[0] == 4
+                          && majorTriad.notes[2] - majorTriad.notes[0] == 7;
+
+        bool cadenceOk = true;
+        for (int seed = 1; seed <= 20; ++seed)
+        {
+            vespera::PatternEngine engine;
+            vespera::PatternParams p;
+            p.steps = 8;
+            p.density = 0.8f;
+            p.octaves = 1;
+            p.contour = 2;
+            p.key = 0;
+            p.scale = 8;
+
+            juce::Random rng (seed);
+            engine.regenerate (pool, 5, p, rng);
+
+            int last = -1;
+            for (int i = 0; i < p.steps; ++i)
+                if (engine.getStep (i).active)
+                    last = i;
+
+            const int pc = ((pool[engine.getStep (last).poolIndex] % 12) + 12) % 12;
+            if (! (pc == 0 || pc == 3 || pc == 7))
+                cadenceOk = false;
+        }
+
+        // The ordered contours count played notes, so with every step active the
+        // "up" figure must climb the pool instead of skipping degrees.
+        bool ascending = true;
+        {
+            vespera::PatternEngine engine;
+            vespera::PatternParams p;
+            p.steps = 8;
+            p.density = 1.0f;
+            p.octaves = 1;
+            p.contour = 0;
+            p.key = 0;
+            p.scale = 8;
+
+            juce::Random rng (11);
+            engine.regenerate (pool, 5, p, rng);
+
+            for (int i = 1; i < 4; ++i)
+                if (engine.getStep (i).poolIndex <= engine.getStep (i - 1).poolIndex)
+                    ascending = false;
+        }
+
+        std::cout << "pentatonic: minorTriad=" << minorOk
+                  << " majorTriad=" << majorOk
+                  << " cadence=" << cadenceOk
+                  << " ascending=" << ascending << std::endl;
+
+        if (! (minorOk && majorOk && cadenceOk && ascending))
+        {
+            ++failures;
+            std::cout << "FAIL: pentatonic chords / cadence / contour are wrong" << std::endl;
+        }
+    }
+
+    // --- (14) leap resolution ------------------------------------------------
+    {
+        // A leap has to be answered by a step in the opposite direction: with a
+        // gapped pool the free contours must not keep running the same way.
+        const int pool[4] = { 60, 65, 67, 72 };   // C, F, G, C
+
+        bool answered = true;
+        int leaps = 0;
+
+        for (int seed = 1; seed <= 60; ++seed)
+        {
+            vespera::PatternEngine engine;
+            vespera::PatternParams p;
+            p.steps = 8;
+            p.density = 1.0f;
+            p.octaves = 1;
+            p.contour = vespera::kContourRandom;
+            p.key = 0;
+            p.scale = 0;
+
+            juce::Random rng (seed);
+            engine.regenerate (pool, 4, p, rng);
+
+            int prevPitch = -1;
+            int prevInterval = 0;
+
+            for (int i = 0; i < 4; ++i)          // the motif, before variations
+            {
+                const auto& s = engine.getStep (i);
+                if (! s.active)
+                    continue;
+
+                const int pitch = pool[s.poolIndex] + 12 * s.octave;
+
+                if (prevPitch >= 0)
+                {
+                    const int interval = pitch - prevPitch;
+
+                    if (std::abs (prevInterval) >= 5 && interval * prevInterval > 0)
+                        answered = false;
+
+                    if (std::abs (interval) >= 5)
+                        ++leaps;
+
+                    prevInterval = interval;
+                }
+
+                prevPitch = pitch;
+            }
+        }
+
+        std::cout << "leaps: answered=" << answered << " count=" << leaps << std::endl;
+
+        if (! (answered && leaps > 0))
+        {
+            ++failures;
+            std::cout << "FAIL: a leap is not answered by a step back" << std::endl;
         }
     }
 

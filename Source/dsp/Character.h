@@ -102,9 +102,15 @@ public:
 
         // Ring modulation: low settings give a gentle tremolo, high settings a
         // metallic sideband cluster.
-        const float ringDepth = ring;
         const float ringHz    = 35.0f + 900.0f * ring * ring;
         const double ringInc  = (double) ringHz * dt;
+
+        // Saturation constants are per-block, not per-sample: tanh() is one of
+        // the most expensive calls in the loop and the curve never changes
+        // while the knob is still.
+        const float driveK    = 1.0f + drive * 6.0f;
+        const float driveMakeup = 1.0f / (1.0f + drive * 2.0f);
+        const float driveNorm = 1.0f / std::tanh (driveK);
 
         for (int n = 0; n < numSamples; ++n)
         {
@@ -147,10 +153,8 @@ public:
             // --- saturation -------------------------------------------------
             if (drive > 0.001f)
             {
-                const float k = 1.0f + drive * 6.0f;
-                const float makeup = 1.0f / (1.0f + drive * 2.0f);
-                const float sl = std::tanh (l * k) / std::tanh (k) * makeup;
-                const float sr2 = std::tanh (r * k) / std::tanh (k) * makeup;
+                const float sl = std::tanh (l * driveK) * driveNorm * driveMakeup;
+                const float sr2 = std::tanh (r * driveK) * driveNorm * driveMakeup;
                 l += (sl - l) * drive;
                 r += (sr2 - r) * drive;
             }
@@ -163,13 +167,13 @@ public:
             }
 
             // --- ring modulation --------------------------------------------
-            if (ringDepth > 0.001f)
+            if (ring > 0.001f)
             {
                 ringPhase += ringInc;
                 if (ringPhase >= 1.0) ringPhase -= 1.0;
 
                 const float mod = std::sin (juce::MathConstants<float>::twoPi * (float) ringPhase);
-                const float g = (1.0f - ringDepth) + mod * ringDepth;
+                const float g = (1.0f - ring) + mod * ring;
                 l *= g;
                 r *= g;
             }

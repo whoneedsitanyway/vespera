@@ -227,11 +227,11 @@ void PatternDisplay::paint (juce::Graphics& g)
                                         ? "mutates every cycle"
                                         : "locked pattern";
 
-    const auto contourNames = getContourNames();
+    const auto& contourNames = getContourNames();
     const juce::String contourName = contourNames[juce::jlimit (0, contourNames.size() - 1,
                                                                view.contour)];
 
-    const auto rateNames = getRateNames();
+    const auto& rateNames = getRateNames();
     const juce::String rateName = rateNames[juce::jlimit (0, rateNames.size() - 1, view.rate)];
 
     const juce::String stateText = view.running ? mutateText

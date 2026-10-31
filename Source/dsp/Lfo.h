@@ -2,7 +2,6 @@
 
 #include <juce_core/juce_core.h>
 #include <cmath>
-#include <algorithm>
 
 namespace vespera
 {
@@ -30,9 +29,11 @@ public:
         numShapes
     };
 
-    static juce::StringArray getNames()
+    static const juce::StringArray& getNames()
     {
-        return { "Sine", "Triangle", "Saw Up", "Saw Down", "Square", "Random", "Walk" };
+        static const juce::StringArray names { "Sine", "Triangle", "Saw Up", "Saw Down",
+                                               "Square", "Random", "Walk" };
+        return names;
     }
 
     void reset() noexcept

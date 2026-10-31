@@ -2,7 +2,6 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <cmath>
-#include <algorithm>
 
 namespace vespera
 {
@@ -73,8 +72,6 @@ public:
             R[n] = softClip (processSample (st[1], R[n], type));
         }
     }
-
-    float getEnvelope() const noexcept { return env; }
 
 private:
     struct State { float ic1 = 0.0f, ic2 = 0.0f; };

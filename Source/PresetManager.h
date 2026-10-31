@@ -33,8 +33,6 @@ public:
        #endif
     }
 
-    juce::File getDirectory() const { return dir; }
-
     static juce::String getDefaultPresetName() { return vespera::factory::defaultPresetName(); }
 
     void installFactoryPresets() const
@@ -115,9 +113,6 @@ public:
         return false;
     }
 
-    juce::String getLastPreset() const { return lastPreset; }
-    void setLastPreset (const juce::String& n) { lastPreset = n; }
-
 private:
     static juce::String sanitise (const juce::String& name)
     {
@@ -133,5 +128,4 @@ private:
 
     juce::AudioProcessorValueTreeState& apvts;
     juce::File dir;
-    juce::String lastPreset;
 };

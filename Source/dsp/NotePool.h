@@ -23,7 +23,6 @@ public:
     void reset()
     {
         count = 0;
-        changed = false;
     }
 
     void setLatch (bool shouldLatch) noexcept { latch = shouldLatch; }
@@ -40,7 +39,16 @@ public:
 
         for (int i = 0; i < count; ++i)
             if (recent[(size_t) i] == note)
+            {
+                // Replaying a note makes it the most recent one again, so the
+                // FIFO keeps what was actually played last.  The set itself is
+                // unchanged, so the generator does not rebuild on a repeat.
+                for (int j = i + 1; j < count; ++j)
+                    recent[(size_t) (j - 1)] = recent[(size_t) j];
+
+                recent[(size_t) (count - 1)] = note;
                 return false;
+            }
 
         // Keep the array ordered from oldest to newest and never longer than
         // the requested pool size.  This also handles the user shrinking the
@@ -55,13 +63,7 @@ public:
         }
 
         recent[(size_t) count++] = note;
-        changed = true;
         return true;
-    }
-
-    int size (int maxSize) const
-    {
-        return juce::jmin (count, juce::jlimit (1, kMaxNotes, maxSize));
     }
 
     // Copies the most recent `maxSize` notes in ascending pitch order.
@@ -83,14 +85,12 @@ public:
         return n;
     }
 
-    bool consumeChanged() noexcept
+private:
+    int size (int maxSize) const
     {
-        const bool c = changed;
-        changed = false;
-        return c;
+        return juce::jmin (count, juce::jlimit (1, kMaxNotes, maxSize));
     }
 
-private:
     void trimTo (int maxSize)
     {
         if (count <= maxSize)
@@ -106,7 +106,6 @@ private:
     std::array<int, kMaxNotes> recent {};
     int  count = 0;
     bool latch = false;
-    bool changed = false;
 };
 
 } // namespace vespera

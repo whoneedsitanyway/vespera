@@ -4,7 +4,6 @@
 
 #include <atomic>
 #include <array>
-#include <vector>
 
 #include "dsp/Scale.h"
 #include "dsp/Chord.h"
@@ -155,10 +154,6 @@ public:
         return displayRunning.load (std::memory_order_relaxed);
     }
 
-    // Step length of the pattern, expressed in quarter-note beats.
-    static double rateInBeats (int rateIndex);
-    static int    numRates();
-
     vespera::DebugLogger& getDebugLogger() noexcept { return debugLogger; }
 
     bool wasStateRestored() const noexcept { return stateRestored.load (std::memory_order_relaxed); }
@@ -233,6 +228,10 @@ private:
     RawParams rawParams;
 
     double triggerStep (double samplesPerStep, float gate, float swing);
+    // Rebuilds the pattern when a generator control, the pool or the scale
+    // moved.  Called from triggerStep() and from processBlock() when the pool
+    // changes, so the display and the synth never disagree.
+    void ensurePattern (const int* poolNotes, int n, const vespera::PatternParams& pp);
     void updatePatternView (const int* poolNotes, int poolSize);
     vespera::PatternParams currentPatternParams() const;
     static double lfoRateInBeats (int rateIndex);
@@ -288,7 +287,6 @@ private:
     vespera::PatternView view;
     mutable juce::SpinLock viewLock;
 
-    double lfoPhase = 0.0;
     vespera::DebugLogger debugLogger;
     double logTimeSec = 0.0;
 

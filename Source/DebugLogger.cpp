@@ -105,8 +105,6 @@ void DebugLogger::drain()
 
         if (s.flags != 0)
         {
-            lastFlags.store (s.flags, std::memory_order_relaxed);
-            lastAnomalySec.store (s.timeSec, std::memory_order_relaxed);
             anomalyCount.fetch_add (1, std::memory_order_relaxed);
 
             const bool flagsChanged    = (s.flags != lastLoggedFlags);

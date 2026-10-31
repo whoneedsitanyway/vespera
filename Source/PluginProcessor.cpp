@@ -210,16 +210,6 @@ APVTS::ParameterLayout VesperaAudioProcessor::createParameterLayout()
 }
 
 //==============================================================================
-int VesperaAudioProcessor::numRates()
-{
-    return vespera::numRates();
-}
-
-double VesperaAudioProcessor::rateInBeats (int rateIndex)
-{
-    return vespera::rateInBeats (rateIndex);
-}
-
 double VesperaAudioProcessor::lfoRateInBeats (int rateIndex)
 {
     static constexpr double beats[] = { 16.0, 8.0, 4.0, 2.0, 1.0, 0.5, 0.25, 0.125 };
@@ -273,7 +263,6 @@ void VesperaAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     outputSmoothed.setCurrentAndTargetValue (
         juce::Decibels::decibelsToGain (rawParams.output->load()));
 
-    lfoPhase = 0.0;
     lfo.reset();
     logTimeSec = 0.0;
     debugLogger.start();
@@ -296,6 +285,11 @@ bool VesperaAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) 
 //==============================================================================
 void VesperaAudioProcessor::monitorNoteOn (int rawNote, int playedNote, float velocity)
 {
+    // A repeated note-on for a key that is already held restarts the note.
+    // Release the old voice first, otherwise the matching note-off would only
+    // stop one of the two and leave the other hanging.
+    monitorNoteOff (rawNote);
+
     if (monitorNoteCount >= (int) monitorNotes.size())
         monitorNoteOff (monitorNotes[0].raw);   // drop the oldest, never grow
 
@@ -322,9 +316,8 @@ void VesperaAudioProcessor::monitorNoteOff (int rawNote)
 
 void VesperaAudioProcessor::monitorAllNotesOff()
 {
-    for (int i = 0; i < monitorNoteCount; ++i)
-        synth.noteOff (monitorNotes[(size_t) i].played);
-
+    // All Notes Off silences the whole instrument (pattern voices included),
+    // so there is nothing left to track.
     monitorNoteCount = 0;
     synth.allNotesOff();
 }
@@ -419,8 +412,6 @@ vespera::PatternParams VesperaAudioProcessor::currentPatternParams() const
     pp.octaves = (int) rawParams.octaves->load();
     pp.contour = (int) rawParams.contour->load();
     pp.mutate  = rawParams.mutate->load();
-    pp.gate    = rawParams.gate->load();
-    pp.swing   = rawParams.swing->load();
     pp.accent  = rawParams.accent->load();
     pp.key     = (int) rawParams.key->load();
     pp.scale   = (int) rawParams.scale->load();
@@ -428,31 +419,24 @@ vespera::PatternParams VesperaAudioProcessor::currentPatternParams() const
 }
 
 //==============================================================================
-double VesperaAudioProcessor::triggerStep (double samplesPerStep, float gate, float swing)
+void VesperaAudioProcessor::ensurePattern (const int* poolNotes, int n,
+                                           const vespera::PatternParams& pp)
 {
-    using namespace vespera;
-
-    PatternParams pp = currentPatternParams();
-    pp.gate  = gate;
-    pp.swing = swing;
-
-    int poolNotes[NotePool::kMaxNotes] {};
-    const int poolSize = (int) rawParams.poolSize->load();
-    const int n = notePool.getSorted (poolNotes, poolSize);
-
     // Rebuild the pattern immediately when a generator control moves, so the
     // knobs feel live instead of waiting for the next mutation cycle.
+    const int poolSizeParam = (int) rawParams.poolSize->load();
+
     if (std::abs (pp.density - lastDensity) > 1.0e-6f
         || pp.octaves != lastOctaves
         || pp.contour != lastContour
         || std::abs (pp.accent - lastAccent) > 1.0e-6f
-        || poolSize   != lastPoolSizeParam)
+        || poolSizeParam != lastPoolSizeParam)
     {
         lastDensity = pp.density;
         lastOctaves = pp.octaves;
         lastContour = pp.contour;
         lastAccent = pp.accent;
-        lastPoolSizeParam = poolSize;
+        lastPoolSizeParam = poolSizeParam;
         patternDirty = true;
     }
 
@@ -463,11 +447,25 @@ double VesperaAudioProcessor::triggerStep (double samplesPerStep, float gate, fl
         if (currentStep >= pattern.getLength())
             currentStep = 0;
     }
+}
+
+//==============================================================================
+double VesperaAudioProcessor::triggerStep (double samplesPerStep, float gate, float swing)
+{
+    using namespace vespera;
+
+    const PatternParams pp = currentPatternParams();
+
+    int poolNotes[NotePool::kMaxNotes] {};
+    const int poolSize = (int) rawParams.poolSize->load();
+    const int n = notePool.getSorted (poolNotes, poolSize);
+
+    ensurePattern (poolNotes, n, pp);
 
     const int triggeredStep = currentStep;
     const int transpose = (int) rawParams.transpose->load();
-    const int key = (int) rawParams.key->load();
-    const int scale = (int) rawParams.scale->load();
+    const int key = pp.key;
+    const int scale = pp.scale;
     const bool chordsOn = rawParams.chords->load() > 0.5f;
 
     if (n > 0)
@@ -673,14 +671,7 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     {
         lastKey = keyIndex;
         lastScale = scaleIndex;
-
-        int notes[NotePool::kMaxNotes] {};
-        const int n = notePool.getSorted (notes, poolSize);
-
-        pattern.regenerate (notes, n, currentPatternParams(), rng);
         currentStep = 0;
-        patternDirty = false;
-        updatePatternView (notes, n);
         poolChanged = true;
     }
 
@@ -712,8 +703,14 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     if (poolChanged)
     {
         patternDirty = true;
+
         int notes[NotePool::kMaxNotes] {};
         const int n = notePool.getSorted (notes, poolSize);
+
+        // Rebuild right here as well: while the transport is stopped the
+        // generator never reaches triggerStep(), and the display would show the
+        // previous pattern over the new pool.
+        ensurePattern (notes, n, currentPatternParams());
         updatePatternView (notes, n);
     }
 
@@ -763,7 +760,8 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         samplesToNextStep -= (double) chunk;
     }
 
-    displayVoices.store (synth.getActiveVoiceCount(), std::memory_order_relaxed);
+    const int activeVoices = synth.getActiveVoiceCount();
+    displayVoices.store (activeVoices, std::memory_order_relaxed);
 
     const float synthPeak = peakMagnitude (outBuffer, numSamples);
 
@@ -919,7 +917,7 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         snap.playSyncOn = playSync;
         snap.seqRunning = sequencerRunning;
         snap.bpm = (float) currentBpm;
-        snap.activeVoices = synth.getActiveVoiceCount();
+        snap.activeVoices = activeVoices;
         snap.currentStep = currentStep;
 
         snap.latchOn = latchOn;

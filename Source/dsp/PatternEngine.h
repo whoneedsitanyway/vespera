@@ -24,8 +24,10 @@ namespace vespera
 //      the listener hears a theme rather than noise;
 //    * the register belongs to the phrase, never to a single note;
 //    * leaps are limited, and a leap is answered by a step back;
-//    * the phrase resolves onto a stable degree (tonic, third or fifth);
-//    * harmony changes once per bar, not on every sixteenth.
+//    * the phrase resolves onto the tonic when it is near, otherwise onto a
+//      stable degree (third or fifth);
+//    * the chord quality changes once per bar, so the harmony moves with the
+//      line instead of flickering on every sixteenth.
 //
 //  The contour decides the shape of the motif (up, down, ping-pong, random or a
 //  random walk), density now controls how many steps speak, and mutate evolves
@@ -38,8 +40,6 @@ struct PatternParams
     int   octaves  = 2;      // 1 .. 3
     int   contour  = 2;      // see Contour
     float mutate   = 0.0f;   // 0 .. 1
-    float gate     = 0.5f;   // 0.05 .. 1
-    float swing    = 0.0f;   // 0 .. 1
     float accent   = 0.3f;   // 0 .. 1
 
     // Musical context: the generator needs it to resolve phrases onto stable
@@ -59,17 +59,21 @@ enum Contour
     kNumContours
 };
 
-inline juce::StringArray getContourNames()
+// The tables are shared, not rebuilt on every call: the UI asks for them while
+// painting, so returning a cached array keeps the paint path allocation-free.
+inline const juce::StringArray& getContourNames()
 {
-    return { "Up", "Down", "Up-Down", "Random", "Walk", "Reverse" };
+    static const juce::StringArray names { "Up", "Down", "Up-Down", "Random", "Walk", "Reverse" };
+    return names;
 }
 
 // Step length in note values.  The first six entries keep their original order
 // (so saved presets keep their tempo), the triplets and dotted values follow.
-inline juce::StringArray getRateNames()
+inline const juce::StringArray& getRateNames()
 {
-    return { "1/1", "1/2", "1/4", "1/8", "1/16", "1/32",
-             "1/4T", "1/8T", "1/16T", "1/4D", "1/8D", "1/16D" };
+    static const juce::StringArray names { "1/1", "1/2", "1/4", "1/8", "1/16", "1/32",
+                                           "1/4T", "1/8T", "1/16T", "1/4D", "1/8D", "1/16D" };
+    return names;
 }
 
 // Step length expressed in quarter-note beats, index order matches getRateNames().
@@ -152,6 +156,11 @@ public:
 
             buildPattern (forward, rng);
             std::reverse (steps.begin(), steps.begin() + length);
+
+            // Mirroring turns the forward cadence into the *first* note, so the
+            // reversed figure has to resolve its own ending.
+            ensurePlayable (p);
+            applyCadence (p);
         }
         else
         {
@@ -190,11 +199,27 @@ public:
             // Evolve by a degree, not by a jump: a neighbour keeps the shape of
             // the phrase while still being a new pitch.
             const int oldIndex = juce::jlimit (0, poolCount - 1, s.poolIndex);
+            const int oldPitch = pitchAt (oldIndex, s.octave);
             const int dir = rng.nextBool() ? 1 : -1;
             int index = juce::jlimit (0, poolCount - 1, oldIndex + dir);
 
             if (index == oldIndex)
                 index = juce::jlimit (0, poolCount - 1, oldIndex - dir);
+
+            // The pool may hold notes from several octaves, so "one step" can
+            // still be a huge leap.  Try the other side, otherwise leave the
+            // step alone: a mutation should never break the line.
+            constexpr int kMaxMutationLeap = 7;
+            if (std::abs (pitchAt (index, s.octave) - oldPitch) > kMaxMutationLeap)
+            {
+                const int other = juce::jlimit (0, poolCount - 1, oldIndex - dir);
+
+                if (other == oldIndex
+                    || std::abs (pitchAt (other, s.octave) - oldPitch) > kMaxMutationLeap)
+                    continue;
+
+                index = other;
+            }
 
             s.poolIndex = index;
         }
@@ -271,7 +296,9 @@ private:
         applyCadence (p);
     }
 
-    int pickPoolIndex (int step, int contour, juce::Random& rng)
+    // `position` is the number of notes already played in the motif; the ordered
+    // contours use it so a rest in the mask does not skip a scale degree.
+    int pickPoolIndex (int position, int contour, juce::Random& rng)
     {
         const int poolSize = juce::jmax (1, poolCount);
 
@@ -280,11 +307,11 @@ private:
         switch (contour)
         {
             case kContourUp:
-                index = step % poolSize;
+                index = position % poolSize;
                 break;
 
             case kContourDown:
-                index = poolSize - 1 - (step % poolSize);
+                index = poolSize - 1 - (position % poolSize);
                 break;
 
             case kContourUpDown:
@@ -295,7 +322,7 @@ private:
                     break;
                 }
                 const int cycle = 2 * poolSize - 2;
-                const int pos = step % cycle;
+                const int pos = position % cycle;
                 index = (pos < poolSize) ? pos : cycle - pos;
                 break;
             }
@@ -456,25 +483,31 @@ private:
             return true;
 
         const int pc = ((pitch - juce::jlimit (0, 11, key)) % 12 + 12) % 12;
-        int degree = -1;
 
+        // The note has to be in the scale before it can be a chord tone.
+        bool inScale = false;
         for (int i = 0; i < n; ++i)
             if (intervals[(size_t) i] == pc)
             {
-                degree = i;
+                inScale = true;
                 break;
             }
 
-        if (degree < 0)
+        if (! inScale)
             return false;
 
-        if (n >= 12)                                          // chromatic: major triad
-            return degree == 0 || degree == 4 || degree == 7;
+        // Tonic, third and fifth, identified by *interval* rather than by the
+        // scale-degree index: in the pentatonic modes the third is not the third
+        // degree, so an index-based rule resolved the cadence onto a fourth.
+        if (n >= 12)
+            return pc == 0 || pc == 4 || pc == 7;          // chromatic: major triad
 
-        if (n == 5)                                           // pentatonic: tonic + third
-            return degree == 0 || degree == 2;
+        return pc == 0 || pc == 3 || pc == 4 || pc == 7;   // tonic, third, fifth
+    }
 
-        return degree == 0 || degree == 2 || degree == 4;      // tonic, third, fifth
+    static bool isTonic (int pitch, int key)
+    {
+        return ((pitch - juce::jlimit (0, 11, key)) % 12 + 12) % 12 == 0;
     }
 
     // Moves a step onto a stable degree, but only when a chord tone is within
@@ -537,9 +570,38 @@ private:
         octaveOffset = juce::jlimit (-1, 1, (int) std::lround ((double) delta / 12.0));
     }
 
+    // Closest pool note on one side of `from`, never further than maxLeap.
+    // Returns -1 when the pool has nothing there.
+    int nearestInDirection (int from, int direction, int maxLeap) const
+    {
+        int best = -1;
+        int bestDistance = 1000;
+
+        for (int i = 0; i < poolCount; ++i)
+        {
+            const int delta = pitchAt (i, 0) - from;
+
+            if (direction > 0 ? delta <= 0 : delta >= 0)
+                continue;
+
+            const int d = std::abs (delta);
+            if (d > maxLeap)
+                continue;
+
+            if (d < bestDistance)
+            {
+                bestDistance = d;
+                best = i;
+            }
+        }
+
+        return best;
+    }
+
     // Keeps a line singable: no leap beyond a fifth for the free contours (an
     // octave for the ordered ones, whose shape has to survive), and a leap is
-    // answered by a step back.
+    // answered by a step back, the classic melodic rule that stops a random
+    // line from running away in one direction.
     int smoothIndex (int index, int prevPitch, int prevInterval, int contour) const
     {
         if (prevPitch < 0 || poolCount <= 1)
@@ -550,40 +612,31 @@ private:
         const int maxLeap = ordered ? 12 : 7;
 
         const int pitch = pitchAt (index, 0);
-        if (std::abs (pitch - prevPitch) <= maxLeap)
+        const int delta = pitch - prevPitch;
+
+        if (! ordered && std::abs (prevInterval) >= 5 && delta * prevInterval > 0)
+        {
+            const int back = nearestInDirection (prevPitch, prevInterval > 0 ? -1 : 1,
+                                                 maxLeap);
+            if (back >= 0)
+                return back;
+        }
+
+        if (std::abs (delta) <= maxLeap)
             return index;
 
         int dir = 0;
         if (contour == kContourUp)             dir = 1;
         else if (contour == kContourDown)      dir = -1;
         else if (std::abs (prevInterval) >= 5) dir = prevInterval > 0 ? -1 : 1;
-        else                                   dir = pitch >= prevPitch ? 1 : -1;
+        else                                   dir = delta >= 0 ? 1 : -1;
 
-        int best = -1;
-        int bestDistance = 1000;
-
-        for (int i = 0; i < poolCount; ++i)
-        {
-            const int candidate = pitchAt (i, 0);
-            const int delta = candidate - prevPitch;
-
-            if (dir > 0 && delta <= 0) continue;
-            if (dir < 0 && delta >= 0) continue;
-
-            const int d = std::abs (delta);
-            if (d > maxLeap) continue;
-
-            if (d < bestDistance)
-            {
-                bestDistance = d;
-                best = i;
-            }
-        }
+        int best = nearestInDirection (prevPitch, dir, maxLeap);
 
         if (best < 0)
         {
             // Nothing in that direction: fall back to the closest note overall.
-            bestDistance = 1000;
+            int bestDistance = 1000;
             for (int i = 0; i < poolCount; ++i)
             {
                 const int d = std::abs (pitchAt (i, 0) - prevPitch);
@@ -625,6 +678,7 @@ private:
     {
         int prevPitch = -1;
         int prevInterval = 0;
+        int position = 0;      // active note count: drives the ordered contours
 
         for (int k = 0; k < len; ++k)
         {
@@ -635,8 +689,16 @@ private:
             if (mActive[k] == 0)
                 continue;
 
-            int index = pickPoolIndex (k, p.contour, rng);
+            // The ordered contours count *played* notes, not steps: with rests
+            // in the mask an "up" line would otherwise skip degrees and stop
+            // sounding like a scale.
+            int index = pickPoolIndex (position, p.contour, rng);
             index = smoothIndex (index, prevPitch, prevInterval, p.contour);
+
+            // The walk / random contours step relative to the previous *played*
+            // note, so smoothing has to feed back into the cursor; otherwise the
+            // next pick is measured from a note that was never heard.
+            lastIndex = index;
 
             mIndex[k] = index;
             mVelocity[k] = velocityFor (k, p, rng);
@@ -645,6 +707,7 @@ private:
             if (prevPitch >= 0)
                 prevInterval = pitch - prevPitch;
             prevPitch = pitch;
+            ++position;
         }
     }
 
@@ -656,22 +719,22 @@ private:
         kVariationRetrograde
     };
 
-    // A transposed variation only works while the figure stays inside the pool:
-    // notes pushed past the pool's register would be squashed onto its edge by
-    // fitToPool(), which turned a whole variation into one repeated note.
+    // A transposed variation is only used when the whole motif survives it:
+    // every note has to land close to a pool note and two different notes must
+    // not collapse onto the same pitch.  A sparse pool would otherwise turn the
+    // answer into a repeated note or a wrong leap, so the caller falls back to a
+    // rhythmic shift in that case.
     int pickTranspose (VariationKind kind, const PatternParams& p,
                        const int* mActive, const int* mIndex) const
     {
         if (kind != kVariationTranspose || poolCount <= 0)
             return 0;
 
-        const int lo = pool[0];
-        const int hi = pool[poolCount - 1];
-        const int dir = 2;
-
-        auto countInside = [this, &p, mActive, mIndex, lo, hi] (int degrees)
+        auto fits = [this, &p, mActive, mIndex] (int degrees)
         {
-            int count = 0;
+            constexpr int kMaxSnap = 3;      // semitones a note may be nudged
+            int previous = -1;
+
             for (int k = 0; k < motifLength; ++k)
             {
                 if (mActive[k] == 0)
@@ -679,24 +742,37 @@ private:
 
                 const int pitch = Scale::transposeDegrees (pitchAt (mIndex[k], 0),
                                                            degrees, p.key, p.scale);
-                if (pitch >= lo && pitch <= hi)
-                    ++count;
+                int index = 0;
+                int octaveOffset = 0;
+                fitToPool (pitch, index, octaveOffset);
+
+                if (std::abs (pool[index] + 12 * octaveOffset - pitch) > kMaxSnap)
+                    return false;
+
+                if (index == previous)
+                    return false;
+
+                previous = index;
             }
-            return count;
+
+            return true;
         };
 
-        const int up = countInside (dir);
-        const int down = countInside (-dir);
+        // Up first: a rising answer reads as a response to the opening phrase.
+        if (fits (2))
+            return 2;
 
-        // Prefer the direction that keeps most of the motif in register; on a
-        // tie the figure rises, which reads as an answer to the opening phrase.
-        return up >= down ? dir : -dir;
+        if (fits (-2))
+            return -2;
+
+        return 0;
     }
 
     void writeSection (int start, int len, int section, const PatternParams& p,
                        int baseOctave, juce::Random& rng,
                        const int* mActive, const int* mIndex, const float* mVelocity)
-    {        VariationKind kind = kVariationRepeat;
+    {
+        VariationKind kind = kVariationRepeat;
 
         // A B A C: every odd section answers the motif.
         if (section > 0 && (section % 2) == 1)
@@ -713,7 +789,13 @@ private:
         if (section > 0 && p.octaves >= 2 && rng.nextFloat() < 0.30f)
             sectionOctave = juce::jlimit (-1, 1, baseOctave + 1);
 
-        const int degrees = pickTranspose (kind, p, mActive, mIndex);
+        int degrees = pickTranspose (kind, p, mActive, mIndex);
+
+        // No transposition fits the pool: answer with a rhythmic displacement,
+        // which still varies the phrase without inventing wrong pitches.
+        if (kind == kVariationTranspose && degrees == 0)
+            kind = kVariationShift;
+
         const int motifLen = juce::jmax (1, motifLength);
 
         for (int k = 0; k < len; ++k)
@@ -746,18 +828,12 @@ private:
                 const int pitch = Scale::transposeDegrees (pitchAt (mIndex[pitchSrc], 0),
                                                            degrees, p.key, p.scale);
 
-                // A note that leaves the pool's register keeps its original
-                // pitch: a partial transposition still varies the phrase, while
-                // a clamped one would just repeat the pool's edge note.
-                if (pitch >= pool[0] && pitch <= pool[poolCount - 1])
-                {
-                    int index = 0;
-                    int octaveOffset = 0;
-                    fitToPool (pitch, index, octaveOffset);
+                int index = 0;
+                int octaveOffset = 0;
+                fitToPool (pitch, index, octaveOffset);
 
-                    s.poolIndex = index;
-                    s.octave = juce::jlimit (-1, 1, sectionOctave + octaveOffset);
-                }
+                s.poolIndex = index;
+                s.octave = juce::jlimit (-1, 1, sectionOctave + octaveOffset);
             }
         }
     }
@@ -780,7 +856,39 @@ private:
 
         // The phrase has to land somewhere.
         if (lastActive >= 0)
-            resolveToStable (steps[(size_t) lastActive], p, 127);
+        {
+            auto& last = steps[(size_t) lastActive];
+            resolveToStable (last, p, 127);
+
+            // The third and fifth are stable, but a phrase only feels finished
+            // when it lands on the tonic.  Take the tonic when it is close
+            // enough to keep the line smooth; otherwise the stable degree is the
+            // better ending.
+            const int pitch = pitchAt (last.poolIndex, last.octave);
+
+            if (! isTonic (pitch, p.key))
+            {
+                int best = -1;
+                int bestDistance = 8;   // up to a fifth: the classic cadential fall
+
+                for (int i = 0; i < poolCount; ++i)
+                {
+                    const int candidate = pitchAt (i, last.octave);
+                    if (! isTonic (candidate, p.key))
+                        continue;
+
+                    const int d = std::abs (candidate - pitch);
+                    if (d < bestDistance)
+                    {
+                        bestDistance = d;
+                        best = i;
+                    }
+                }
+
+                if (best >= 0)
+                    last.poolIndex = best;
+            }
+        }
 
         // Bar starts carry the harmony: an unstable degree is nudged onto a
         // chord tone, but only by a small interval.
@@ -797,11 +905,17 @@ private:
         {
             const bool lastBar = (bar == bars - 1);
 
-            // One chord per bar: the harmony is heard as movement instead of
-            // flickering on every sixteenth.  The last bar resolves — root
-            // position, no seventh.
+            // The bar before the cadence is where a seventh adds the most
+            // tension, so it is voiced more often there than in the middle of
+            // the phrase.
+            const bool preCadence = (bars >= 3 && bar == bars - 2);
+
+            // One chord *quality* per bar: the root follows the melody note, so
+            // the harmony moves with the line instead of flickering a new chord
+            // colour on every sixteenth.  The last bar resolves — root position,
+            // no seventh.
             juce::uint8 mask = 0x7;
-            if (! lastBar && rng.nextFloat() < 0.30f)
+            if (! lastBar && rng.nextFloat() < (preCadence ? 0.55f : 0.25f))
                 mask |= 0x8;
 
             // Only used by the chromatic scale, where a diatonic third does not

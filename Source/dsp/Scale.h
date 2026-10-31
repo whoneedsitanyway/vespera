@@ -1,7 +1,6 @@
 #pragma once
 
 #include <juce_audio_basics/juce_audio_basics.h>
-#include <array>
 #include <vector>
 #include <algorithm>
 #include <cmath>
@@ -19,16 +18,19 @@ namespace vespera
 class Scale
 {
 public:
-    static juce::StringArray getNames()
+    static const juce::StringArray& getNames()
     {
-        return { "Major", "Minor", "Dorian", "Phrygian", "Lydian",
-                 "Mixolydian", "Harm. Minor", "Pent. Major", "Pent. Minor",
-                 "Chromatic" };
+        static const juce::StringArray names { "Major", "Minor", "Dorian", "Phrygian", "Lydian",
+                                               "Mixolydian", "Harm. Minor", "Pent. Major",
+                                               "Pent. Minor", "Chromatic" };
+        return names;
     }
 
-    static juce::StringArray getKeyNames()
+    static const juce::StringArray& getKeyNames()
     {
-        return { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+        static const juce::StringArray names { "C", "C#", "D", "D#", "E", "F",
+                                               "F#", "G", "G#", "A", "A#", "B" };
+        return names;
     }
 
     static const std::vector<int>& getIntervals (int scaleIndex)
