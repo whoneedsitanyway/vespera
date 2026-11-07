@@ -8,15 +8,19 @@ Vespera — это **генератор мелодий + синтезатор**.
 паттерн, а полисинтез его воспроизводит.
 
 ```
-MIDI In ─┬─ Scale.quantize ── NotePool ── PatternEngine ── PolySynth ── ResonantFilter ── Character ── Output ── Limiter ── Safety ── Out
-         │   (в лад)          (последние   (контур,        (2 осцилля-  (TPT SVF,        (6 эффектов,  (гейн,      (вкл/     (±1.0,
-         │                    N нот)        плотность,      тора, ADSR,  огибающая       wow, drive,   сглажен-    выкл)     кламп)
-         │                                mutate, swing,    PolyBLEP,    + LFO,          crush, noise,  ный)
-         │                                gate, accent,     панорама)    motion)         fold, ring)
+MIDI In ─┬─ Scale.quantize ── NotePool ── PatternEngine ── PolySynth ── ResonantFilter ── Tape ── Output ── Limiter ── Safety ── Out
+         │   (в лад)          (последние   (контур,        (2 осцилля-  (TPT SVF,        (один     (гейн,   (вкл/     (±1.0,
+         │                    N нот)        плотность,      тора, ADSR,  огибающая       макрос:   сглажен- выкл)     кламп)
+         │                                mutate, swing,    PolyBLEP,    + LFO,          нагрев,   ный)
+         │                                gate, accent,     панорама)    motion)         wow, хисс)
          │                                transpose)
          │
          └─ MONITOR ────────────────────────┘
             (параллельно играет сыгранные ноты)
+
+SecondVoice ── PatternEngine (Answer) ─┐
+             └─ Bass / Harmony / Octave / Drone ── PolySynth (второй голос)
+
 ```
 
 Пулы и генератор:
@@ -149,19 +153,27 @@ NotePool (16 слотов, FIFO) ── PatternEngine (до 16 шагов) ─�
 - Фаза продвигается один раз за блок (`advance(cycles, shape, rng)`).
 - Частота: свободная (Hz, 0.02..20) или синхронная (деления 4/1..1/32 от BPM).
 
-### `Character.h`
-Эффекты «материала» (по мотивам RC-20):
-- **Drive** — тангенциальная сатурация (насыщение с makeup-гейном).
-- **Crush** — бит-краш + sample-rate reduction (16→3 бит, hold до 28 сэмплов),
-  квадратичная кривая (сначала тонко, потом грубо).
-- **Noise** — хисс + виниловый крепит, гейтится огибающей сигнала
-  (шум слышен только когда звучат ноты).
-- **Wow** — tape wow & flutter (линия задержки 2 мс, модуляция ±1.8 мс,
-  0.7 Гц wow + 3.1 Гц flutter, стерео-расхождение).
-- **Fold** — треугольный wavefolder (металлические призвуки).
-- **Ring** — кольцевая модуляция (35 Гц при минимуме, до 935 Гц при максимуме:
-  тремоло → металлический сайдбэнд).
-- Если все ручки на нуле — весь проход пропускается (экономия CPU).
+### `Tape.h`
+Один музыкальный макрос «магнитной ленты» (заменил шесть ручек Character).
+- **Tone** — one-pole LP, 20 кГц → 5.6 кГц: слышно уже на малых значениях.
+- **Saturation** — tanh с ограниченной глубиной (drive 0.06..0.6) и
+  компенсацией уровня: тёплая компрессия вместо фузза.
+- **Wow / flutter** — 0.55 Гц + 4.2 Гц, глубина до ~8 центов; стерео-расхождение.
+- **Hiss** — только после 0.3, гейтится огибающей нот, LP 0.12.
+- При `amount = 0` каскад **полностью пропускается** (bit-transparent, без
+  задержки).
+
+### `SecondVoice.h`
+Второй голос (аранжировка, не эффект). Чистая функция `secondVoiceAt()`
+делит одну логику между аудио-потоком, дисплеем и MIDI-экспортом.
+- **Answer** — второй `PatternEngine` со своим контуром/плотностью, читается
+  со сдвигом `offset` шагов.
+- **Bass** — корень шага на октаву ниже, период из Density (1..4 шага).
+- **Harmony** — диатоническая терция/кварта/квинта/секста ниже лида.
+- **Octave** — дубль на октаву выше.
+- **Drone** — педаль на тонике, звучит до следующего триггера (период 1..8).
+- Все ноты проходят через `Scale::transposeDegrees`, поэтому остаются в ладу.
+
 
 ### `Limiter.h`
 Выходной лимитер (stereo-linked peak limiter).
@@ -187,18 +199,22 @@ NotePool (16 слотов, FIFO) ── PatternEngine (до 16 шагов) ─�
   с учётом смены клавиши между on/off — `monitorNotes[]`).
 - **Смена Key/Scale** — пул реквантизуется, паттерн пересобирается.
 - **RANDOM** (`randomizeParameters()`, сообщение-тред): рандомизирует key/scale
-  (кроме `keyLock`), pattern, voice, filter, character.
-  **Mutate, Transpose, Noise** не трогает.
+  (кроме `keyLock`), pattern, voice, filter, second voice.
+  **Mutate, Transpose, Tape** не трогает.
   Сидит пул нот из нового лада (`buildSeedNotes` + `publishSeed`).
 - **Pool-посев**: сообщение-тред пишет `pendingSeedNotes` (SpinLock),
   аудио-тред применяет на следующем блоке (`applyPendingSeed`).
   UI показывает новый пул сразу.
 - **MIDI-экспорт** (`writePatternMidiFile`): текущий паттерн → Standard MIDI File
-  (1 трек, 480 тиков, темп, swing, gate, end of track).
-- **Порядок выходного каскада**: synth → filter → character → output gain (smoothed 20 мс)
+  (480 тиков, темп, swing, gate, end of track). Второй голос пишется отдельной
+  дорожкой, поэтому клип открывается как 1 или 2 трека.
+- **Порядок выходного каскада**: synth → filter → tape → output gain (smoothed 20 мс)
   → limiter → safety clamp (±1.0) → host buffer.
+- **Второй голос**: `triggerStep()` после лида вызывает `secondVoiceAt()` и
+  запускает ещё одну ноту через тот же `PolySynth` (роль, регистр, плотность).
+  `Answer` читает отдельный `secondPattern`, остальные роли выводятся из шага лида.
 - **Финальный предохранитель**: нефинитные → 0, конечные выбросы → кламп ±1.0;
-  при разгоне (charPeak > 32) — сброс synth/filter/character.
+  при разгоне (tapePeak > 32) — сброс synth/filter/tape.
 - **Чёрный ящик (DebugLogger)**: аудио-поток кладёт в lock-free FIFO снапшот
   блока (пики по каждому каскаду, все параметры, флаги), фоновый поток пишет
   heartbeat раз в 2 с и, при срабатывании флага аномалии, выгружает историю
@@ -207,7 +223,7 @@ NotePool (16 слотов, FIFO) ── PatternEngine (до 16 шагов) ─�
 - Внутренний буфер: `outBuffer` (всегда стерео, 2 канала, размер в prepareToPlay,
  grow только если хост попросил больший блок).
 - Оптимизации: кэш сырых параметров `rawParams` (биндинг в конструкторе),
-  `ScopedNoDenormals`, early-exit в Character при нулевых ручках,
+  `ScopedNoDenormals`, early-exit в Tape при нулевой ручке,
   voice-stealing без аллокаций, `setParams` не пересчитывает ADSR без изменений.
 - Визуализация: `PatternView` — снапшот пула и шагов (spinlock),
   UI читает через `getPatternView()` (try-lock).
@@ -230,7 +246,7 @@ NotePool (16 слотов, FIFO) ── PatternEngine (до 16 шагов) ─�
 - `PluginEditor` — корпус:
   - хедер: слева — окошко пресетов + иконки Save / темы / LOG;
     справа — RANDOM / COMPACT / MIDI (drag-кнопка экспорта).
-  - секции: NOTES / PATTERN / VOICE / FILTER / CHARACTER / OUTPUT.
+  - секции: NOTES / PATTERN / VOICE / FILTER / SECOND VOICE / OUTPUT.
   - внизу: `PatternDisplay` — визуализация пула, шагов и playhead.
   - **COMPACT** скрывает дисплей и уменьшает окно (1280×820 → 1280×600).
   - **LFO Sync** приглушает и отключает ручку RATE (как SYNC/TIME в Lunara).
@@ -264,7 +280,7 @@ NotePool (16 слотов, FIFO) ── PatternEngine (до 16 шагов) ─�
    `synth.noteOnTimed`; при **Chords** — `buildChord()` и до 4 голосов),
    рендер `PolySynth` в `outBuffer`.
 8. `ResonantFilter` (режим, cutoff, reso, env follower, LFO motion).
-9. `Character` (drive, crush, noise, wow, fold, ring).
+9. `Tape` (один макрос: tone, saturation, wow, gated hiss).
 10. Output gain (сглаженный).
 11. `Limiter` → если галочка включена (иначе пропускается).
 12. Финальный предохранитель: нефинитные → 0, конечные → кламп ±1.0;

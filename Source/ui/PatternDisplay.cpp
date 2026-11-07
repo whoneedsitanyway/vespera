@@ -47,6 +47,7 @@ bool PatternDisplay::sameView (const PatternView& a, const PatternView& b)
         || a.poolSize != b.poolSize || a.key != b.key || a.scale != b.scale
         || a.transpose != b.transpose || a.contour != b.contour
         || a.rate != b.rate || a.running != b.running
+        || a.secondRole != b.secondRole
         || std::abs (a.density - b.density) > 1.0e-6f
         || std::abs (a.mutate - b.mutate) > 1.0e-6f)
         return false;
@@ -59,6 +60,10 @@ bool PatternDisplay::sameView (const PatternView& a, const PatternView& b)
         if (a.active[i] != b.active[i] || a.note[i] != b.note[i]
             || a.chordMask[i] != b.chordMask[i]
             || a.chordInversion[i] != b.chordInversion[i]
+            || a.secondActive[i] != b.secondActive[i]
+            || a.secondNote[i] != b.secondNote[i]
+            || std::abs (a.secondVelocity[i] - b.secondVelocity[i]) > 1.0e-6f
+            || std::abs (a.secondLength[i] - b.secondLength[i]) > 1.0e-6f
             || std::abs (a.velocity[i] - b.velocity[i]) > 1.0e-6f)
             return false;
 
@@ -206,6 +211,23 @@ void PatternDisplay::paint (juce::Graphics& g)
             g.drawText (Scale::noteName (note), labelRow, juce::Justification::centred, false);
         }
 
+        // The second voice is a thin line (and a dot) over the lead bar, in the
+        // section colour, so the duet is visible without stealing the melody.
+        if (view.secondActive[slot] && view.secondNote[slot] >= 0)
+        {
+            const float laneTop = cell.getY() + 12.0f;
+            const float laneH   = juce::jmax (1.0f, cell.getBottom() - laneTop);
+            const float norm    = juce::jlimit (0.0f, 1.0f,
+                                                (float) (view.secondNote[slot] - 36) / 48.0f);
+            const float y = cell.getBottom() - laneH * (0.18f + norm * 0.72f);
+
+            juce::Rectangle<float> line (cell.getX() + 3.0f, y - 1.0f,
+                                         cell.getWidth() - 6.0f, 2.0f);
+            g.setColour (hot.withAlpha (current ? 0.95f : 0.70f));
+            g.fillRoundedRectangle (line, 1.0f);
+            g.fillEllipse (cell.getX() + 4.0f, y - 3.0f, 6.0f, 6.0f);
+        }
+
         if (current)
         {
             g.setColour (accent);
@@ -237,11 +259,17 @@ void PatternDisplay::paint (juce::Graphics& g)
     const juce::String stateText = view.running ? mutateText
                                                 : "waiting for transport";
 
+    const auto& roleNames = getSecondRoleNames();
+    const juce::String duetText = view.secondRole > 0
+        ? "   |   duet " + roleNames[juce::jlimit (0, roleNames.size() - 1, view.secondRole)]
+        : "";
+
     g.drawText ("steps " + juce::String (view.steps)
                     + "   |   " + rateName
                     + "   |   " + contourName
                     + "   |   density " + juce::String (densityPercent) + "%"
                     + (chords ? "   |   chords" : "")
+                    + duetText
                     + "   |   " + stateText,
                 footer, juce::Justification::centredLeft, false);
 }

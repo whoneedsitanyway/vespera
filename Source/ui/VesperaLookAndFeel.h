@@ -11,7 +11,7 @@ namespace vespera
 //  Knobs are drawn like chunky hardware controls: a raised cylinder with a
 //  light pointer and a ring of tick marks (no value arc).  The palette is a
 //  deep midnight blue with moonlight, amber and warm orange accents for the
-//  notes, pattern, voice, filter and character sections.
+//  notes, pattern, voice, filter, second voice and output sections.
 //==============================================================================
 class VesperaLookAndFeel : public juce::LookAndFeel_V4
 {

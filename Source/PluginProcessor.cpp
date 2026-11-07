@@ -74,12 +74,14 @@ void VesperaAudioProcessor::bindRawParams()
     rawParams.lfoShape     = bind (ids::lfoShape);
     rawParams.motion       = bind (ids::motion);
 
-    rawParams.drive = bind (ids::drive);
-    rawParams.crush = bind (ids::crush);
-    rawParams.noise = bind (ids::noise);
-    rawParams.wow   = bind (ids::wow);
-    rawParams.fold  = bind (ids::fold);
-    rawParams.ring  = bind (ids::ring);
+    rawParams.tape = bind (ids::tape);
+
+    rawParams.secondRole     = bind (ids::secondRole);
+    rawParams.secondInterval = bind (ids::secondInterval);
+    rawParams.secondOctave   = bind (ids::secondOctave);
+    rawParams.secondOffset   = bind (ids::secondOffset);
+    rawParams.secondDensity  = bind (ids::secondDensity);
+    rawParams.secondLevel    = bind (ids::secondLevel);
 
     rawParams.output  = bind (ids::output);
     rawParams.limiter = bind (ids::limiter);
@@ -175,6 +177,10 @@ APVTS::ParameterLayout VesperaAudioProcessor::createParameterLayout()
     addFloat  (ids::release, "Release", 0.01f, 8.0f, 0.4f, "s", 3, 0.5f);
     addFloat  (ids::detune,  "Detune",  0.0f, 1.0f, 0.15f, "", 2);
 
+    // One musical macro instead of six overlapping effects: the tape stage
+    // adds warmth, a little pitch movement and (only at the top) gated hiss.
+    addFloat  (ids::tape,    "Tape",    0.0f, 1.0f, 0.0f, "", 2);
+
     // --- Filter --------------------------------------------------------------
     addChoice (ids::filterType,   "Filter", { "Off", "LP", "BP", "HP" }, 1);
     addFloat  (ids::filterCutoff, "Cutoff", 30.0f, 18000.0f, 8000.0f, "Hz", 0, 1200.0f);
@@ -187,13 +193,24 @@ APVTS::ParameterLayout VesperaAudioProcessor::createParameterLayout()
     addFloat  (ids::lfoRateHz,    "Rate", 0.02f, 20.0f, 1.0f, "Hz", 2, 1.0f);
     addFloat  (ids::motion,       "Motion", 0.0f, 1.0f, 0.1f, "", 2);
 
-    // --- Character -----------------------------------------------------------
-    addFloat (ids::drive, "Drive", 0.0f, 1.0f, 0.0f, "", 2);
-    addFloat (ids::crush, "Crush", 0.0f, 1.0f, 0.0f, "", 2);
-    addFloat (ids::noise, "Noise", 0.0f, 1.0f, 0.0f, "", 2);
-    addFloat (ids::wow,   "Wow",   0.0f, 1.0f, 0.0f, "", 2);
-    addFloat (ids::fold,  "Fold",  0.0f, 1.0f, 0.0f, "", 2);
-    addFloat (ids::ring,  "Ring",  0.0f, 1.0f, 0.0f, "", 2);
+    // --- Second voice --------------------------------------------------------
+    addChoice (ids::secondRole,     "Role", getSecondRoleNames(), kSecondOff);
+    addChoice (ids::secondInterval, "Interval", getSecondIntervalNames(), 0);
+
+    {
+        auto attrs = juce::AudioParameterIntAttributes()
+                         .withStringFromValueFunction ([] (int v, int)
+                         {
+                             return (v > 0 ? "+" : "") + juce::String (v);
+                         });
+
+        params.push_back (std::make_unique<juce::AudioParameterInt> (
+            ids::secondOctave, "Register", -2, 2, 0, attrs));
+    }
+
+    addInt   (ids::secondOffset,  "Offset",  0, 8, 2);
+    addFloat (ids::secondDensity, "Density", 0.0f, 1.0f, 0.5f, "", 2);
+    addFloat (ids::secondLevel,   "Level",   0.0f, 1.0f, 0.6f, "", 2);
 
     // --- Output --------------------------------------------------------------
     addFloat (ids::output, "Output", -24.0f, 12.0f, 0.0f, "dB", 1);
@@ -225,16 +242,18 @@ void VesperaAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
 
     synth.prepare (sampleRate);
     filter.prepare (sampleRate);
-    character.prepare (sampleRate);
+    tape.prepare (sampleRate);
     outputLimiter.prepare (sampleRate);
 
     outBuffer.setSize (2, samplesPerBlock, false, false, true);
 
     notePool.reset();
     pattern.reset();
+    secondPattern.reset();
     currentStep = 0;
     samplesToNextStep = 0.0;
     patternDirty = true;
+    secondPatternDirty = true;
     lastKey = -1;
     lastScale = -1;
     lastPoolSizeParam = -1;
@@ -242,6 +261,8 @@ void VesperaAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     lastOctaves = -1;
     lastContour = -1;
     lastAccent = -1.0f;
+    lastSecondDensity = -1.0f;
+    lastSecondContour = -1;
     pendingPoolClear.store (false, std::memory_order_relaxed);
     lastSequencerRunning = true;
     displayRunning.store (true, std::memory_order_relaxed);
@@ -400,6 +421,7 @@ bool VesperaAudioProcessor::applyPendingSeed (int poolSize)
     notePool.setLatch (wasLatched);
 
     patternDirty = true;
+    secondPatternDirty = true;
     return true;
 }
 
@@ -416,6 +438,19 @@ vespera::PatternParams VesperaAudioProcessor::currentPatternParams() const
     pp.key     = (int) rawParams.key->load();
     pp.scale   = (int) rawParams.scale->load();
     return pp;
+}
+
+//==============================================================================
+vespera::SecondVoiceParams VesperaAudioProcessor::currentSecondParams() const
+{
+    vespera::SecondVoiceParams sp;
+    sp.role     = (int) rawParams.secondRole->load();
+    sp.interval = (int) rawParams.secondInterval->load();
+    sp.octave   = (int) rawParams.secondOctave->load();
+    sp.offset   = (int) rawParams.secondOffset->load();
+    sp.density  = rawParams.secondDensity->load();
+    sp.level    = rawParams.secondLevel->load();
+    return sp;
 }
 
 //==============================================================================
@@ -447,6 +482,25 @@ void VesperaAudioProcessor::ensurePattern (const int* poolNotes, int n,
         if (currentStep >= pattern.getLength())
             currentStep = 0;
     }
+
+    // The duet line has its own density and a deliberately contrasting contour,
+    // so moving it never has to reshuffle the lead melody.
+    vespera::PatternParams sp = pp;
+    sp.density = rawParams.secondDensity->load();
+    sp.octaves = 1;
+    sp.accent  = 0.0f;
+    sp.contour = (pp.contour + 3) % vespera::kNumContours;
+
+    if (secondPatternDirty
+        || std::abs (sp.density - lastSecondDensity) > 1.0e-6f
+        || sp.contour != lastSecondContour
+        || secondPattern.getLength() != sp.steps)
+    {
+        secondPattern.regenerate (poolNotes, n, sp, rng);
+        secondPatternDirty = false;
+        lastSecondDensity = sp.density;
+        lastSecondContour = sp.contour;
+    }
 }
 
 //==============================================================================
@@ -471,6 +525,7 @@ double VesperaAudioProcessor::triggerStep (double samplesPerStep, float gate, fl
     if (n > 0)
     {
         const auto& step = pattern.getStep (triggeredStep);
+
         if (step.active)
         {
             const int baseNote = poolNotes[juce::jlimit (0, n - 1, step.poolIndex)]
@@ -495,6 +550,20 @@ double VesperaAudioProcessor::triggerStep (double samplesPerStep, float gate, fl
             {
                 synth.noteOnTimed (root, step.velocity, duration);
             }
+        }
+
+        // The duet is an arranging decision, not an effect: it reads the same
+        // lead step (and, for ANSWER, its own generated line) and plays a note
+        // from the same pool and key.
+        const auto second = secondVoiceAt (triggeredStep, pattern.getLength(), step,
+                                           &secondPattern, poolNotes, n,
+                                           currentSecondParams(), key, scale, transpose);
+
+        if (second.active)
+        {
+            const float lengthSteps = second.lengthSteps > 0.0f ? second.lengthSteps : gate;
+            const int secondDuration = juce::jmax (1, (int) (samplesPerStep * lengthSteps));
+            synth.noteOnTimed (second.note, second.velocity, secondDuration);
         }
     }
 
@@ -528,6 +597,9 @@ void VesperaAudioProcessor::updatePatternView (const int* poolNotes, int poolSiz
 
     const int key = v.key;
     const int scale = v.scale;
+    const auto secondParams = currentSecondParams();
+    v.secondRole = secondParams.role;
+
     for (int i = 0; i < vespera::NotePool::kMaxNotes; ++i)
         v.poolNotes[i] = (i < v.poolSize) ? poolNotes[i] : 0;
 
@@ -545,6 +617,16 @@ void VesperaAudioProcessor::updatePatternView (const int* poolNotes, int poolSiz
                                                 + 12 * s.octave,
                                             v.transpose, key, scale))
                         : -1;
+
+        // Same helper as the audio path, so the display and the MIDI export
+        // always agree with what the synth actually plays.
+        const auto sn = secondVoiceAt (i, v.steps, s, &secondPattern,
+                                       poolNotes, v.poolSize, secondParams,
+                                       key, scale, v.transpose);
+        v.secondActive[i]   = (i < v.steps) && sn.active;
+        v.secondNote[i]     = sn.active ? sn.note : -1;
+        v.secondVelocity[i] = sn.velocity;
+        v.secondLength[i]   = sn.lengthSteps;
     }
 
     const juce::SpinLock::ScopedLockType lock (viewLock);
@@ -636,8 +718,10 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     {
         notePool.reset();
         pattern.reset();
+        secondPattern.reset();
         currentStep = 0;
         patternDirty = true;
+        secondPatternDirty = true;
         updatePatternView (nullptr, 0);
     }
 
@@ -660,6 +744,7 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         lastKey = keyIndex;
         lastScale = scaleIndex;
         patternDirty = true;
+        secondPatternDirty = true;
         poolChanged = true;
     }
 
@@ -703,6 +788,7 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     if (poolChanged)
     {
         patternDirty = true;
+        secondPatternDirty = true;
 
         int notes[NotePool::kMaxNotes] {};
         const int n = notePool.getSorted (notes, poolSize);
@@ -787,19 +873,14 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
                     numSamples, (int) rp.filterType->load(), rp.filterCutoff->load(),
                     rp.filterReso->load(), rp.filterEnv->load(), lfoOctaves);
 
-    // --- character -----------------------------------------------------------
-    CharacterParams cp;
-    cp.drive = rp.drive->load();
-    cp.crush = rp.crush->load();
-    cp.noise = rp.noise->load();
-    cp.wow   = rp.wow->load();
-    cp.fold  = rp.fold->load();
-    cp.ring  = rp.ring->load();
+    // --- tape (voice material) ----------------------------------------------
+    TapeParams tp;
+    tp.amount = rp.tape->load();
 
-    character.process (outBuffer.getWritePointer (0), outBuffer.getWritePointer (1),
-                       numSamples, cp);
+    tape.process (outBuffer.getWritePointer (0), outBuffer.getWritePointer (1),
+                  numSamples, tp);
 
-    const float charPeak = peakMagnitude (outBuffer, numSamples);
+    const float tapePeak = peakMagnitude (outBuffer, numSamples);
 
     // --- output level --------------------------------------------------------
     outputSmoothed.setTargetValue (juce::Decibels::decibelsToGain (rp.output->load()));
@@ -865,14 +946,14 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         }
     }
 
-    const bool runaway = bad || charPeak > 32.0f;
+    const bool runaway = bad || tapePeak > 32.0f;
 
     // --- black box -----------------------------------------------------------
     {
         BlockSnapshot snap;
         snap.timeSec    = logTimeSec;
         snap.inPeak     = synthPeak;
-        snap.charPeak   = charPeak;
+        snap.tapePeak   = tapePeak;
         snap.outPeak    = outPeak;
 
         snap.key = keyIndex;
@@ -904,12 +985,15 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         snap.lfoSynced = lfoSynced;
         snap.motion = rp.motion->load();
 
-        snap.drive = cp.drive;
-        snap.crush = cp.crush;
-        snap.noise = cp.noise;
-        snap.wow = cp.wow;
-        snap.fold = cp.fold;
-        snap.ring = cp.ring;
+        snap.tape = tp.amount;
+
+        const auto svp = currentSecondParams();
+        snap.secondRole = svp.role;
+        snap.secondOctave = svp.octave;
+        snap.secondOffset = svp.offset;
+        snap.secondInterval = svp.interval;
+        snap.secondDensity = svp.density;
+        snap.secondLevel = svp.level;
 
         snap.output = rp.output->load();
         snap.limiterOn = limiterOn;
@@ -939,7 +1023,7 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         outBuffer.clear();
         synth.reset();
         filter.reset();
-        character.reset();
+        tape.reset();
     }
 
     // --- fold back into the host buffer --------------------------------------
@@ -1069,13 +1153,23 @@ void VesperaAudioProcessor::randomizeParameters()
     setReal (ids::lfoRateHz,    0.2f + random.nextFloat() * 4.0f);
     setReal (ids::motion,       random.nextFloat() * maxMotion);
 
-    // Character.  Noise is never randomised: it is a deliberate colour, and
-    // turning it on behind the user's back is never welcome.
-    setReal (ids::drive, random.nextFloat() * 0.45f);
-    setReal (ids::crush, random.nextFloat() * 0.3f);
-    setReal (ids::wow,   random.nextFloat() * 0.35f);
-    setReal (ids::fold,  random.nextFloat() < 0.5f ? 0.0f : random.nextFloat() * 0.35f);
-    setReal (ids::ring,  random.nextFloat() < 0.6f ? 0.0f : random.nextFloat() * 0.3f);
+    // Second voice.  Tape is never randomised: it is a deliberate colour, and
+    // turning it on behind the user's back is never welcome.  The duet,
+    // however, is part of the "idea", so RANDOM reshapes it.
+    const float roleRoll = random.nextFloat();
+    const int secondRole = roleRoll < 0.40f ? kSecondOff
+                         : roleRoll < 0.60f ? kSecondAnswer
+                         : roleRoll < 0.72f ? kSecondBass
+                         : roleRoll < 0.84f ? kSecondHarmony
+                         : roleRoll < 0.94f ? kSecondOctave
+                                            : kSecondDrone;
+
+    setReal (ids::secondRole,     (float) secondRole);
+    setReal (ids::secondInterval, pick ({ 0.0f, 1.0f, 2.0f, 3.0f }));
+    setReal (ids::secondOctave,   pick ({ -1.0f, 0.0f, 0.0f, 0.0f, 1.0f }));
+    setReal (ids::secondOffset,   pick ({ 1.0f, 2.0f, 2.0f, 3.0f, 4.0f }));
+    setReal (ids::secondDensity,  0.35f + random.nextFloat() * 0.5f);
+    setReal (ids::secondLevel,    0.35f + random.nextFloat() * 0.3f);
 
     // Output.
     setReal (ids::output, 0.0f);
@@ -1102,6 +1196,7 @@ void VesperaAudioProcessor::randomizeParameters()
         view.running = true;
         view.density = rawParams.density->load();
         view.mutate = rawParams.mutate->load();
+        view.secondRole = (int) rawParams.secondRole->load();
         view.poolSize = seedCount;
         view.currentStep = 0;
 
@@ -1116,6 +1211,10 @@ void VesperaAudioProcessor::randomizeParameters()
             view.active[i] = false;
             view.note[i] = -1;
             view.velocity[i] = 0.0f;
+            view.secondActive[i] = false;
+            view.secondNote[i] = -1;
+            view.secondVelocity[i] = 0.0f;
+            view.secondLength[i] = 0.0f;
         }
     }
 }
@@ -1148,6 +1247,12 @@ bool VesperaAudioProcessor::writePatternMidiFile (const juce::File& destination)
     seq.addEvent (juce::MidiMessage::tempoMetaEvent (
                       juce::roundToInt (60000000.0 / (double) bpm)),
                   0.0);
+
+    // The second voice is written to its own track, so the clip opens as a
+    // small arrangement instead of one doubled line.
+    juce::MidiMessageSequence secondSeq;
+    bool anySecond = false;
+    double lastEventTime = 0.0;
 
     double t = 0.0;
 
@@ -1189,17 +1294,43 @@ bool VesperaAudioProcessor::writePatternMidiFile (const juce::File& destination)
                 seq.addEvent (juce::MidiMessage::noteOn (1, notes[c], velocity), t);
                 seq.addEvent (juce::MidiMessage::noteOff (1, notes[c]), t + length);
             }
+
+            lastEventTime = juce::jmax (lastEventTime, t + length);
+        }
+
+        if (v.secondActive[i] && v.secondNote[i] >= 0)
+        {
+            // A drone rings past the step boundary; everything else follows the
+            // lead GATE so the two parts articulate together.
+            const double lengthSteps = v.secondLength[i] > 0.0f
+                                           ? (double) v.secondLength[i]
+                                           : (double) gate;
+            const double length = juce::jmax (1.0, stepTicks * lengthSteps);
+
+            secondSeq.addEvent (juce::MidiMessage::noteOn (1, v.secondNote[i],
+                                                           v.secondVelocity[i]), t);
+            secondSeq.addEvent (juce::MidiMessage::noteOff (1, v.secondNote[i]), t + length);
+
+            anySecond = true;
+            lastEventTime = juce::jmax (lastEventTime, t + length);
         }
 
         t += interval;
     }
 
     seq.updateMatchedPairs();
-    seq.addEvent (juce::MidiMessage::endOfTrack(), t + 1.0);
+    seq.addEvent (juce::MidiMessage::endOfTrack(), lastEventTime + 1.0);
 
     juce::MidiFile midiFile;
     midiFile.setTicksPerQuarterNote (ticksPerQuarter);
     midiFile.addTrack (seq);
+
+    if (anySecond)
+    {
+        secondSeq.updateMatchedPairs();
+        secondSeq.addEvent (juce::MidiMessage::endOfTrack(), lastEventTime + 1.0);
+        midiFile.addTrack (secondSeq);
+    }
 
     destination.deleteFile();
 

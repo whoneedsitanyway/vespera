@@ -427,7 +427,7 @@ int main()
         }
     }
 
-    // --- (1e) RANDOM leaves MUTATE and NOISE alone ---------------------------
+    // --- (1e) RANDOM leaves MUTATE and TAPE alone ---------------------------
     {
         VesperaAudioProcessor proc;
         proc.setPlayConfigDetails (0, 2, 48000.0, 512);
@@ -435,21 +435,21 @@ int main()
         const bool mutateDefaultsOff = std::abs (getParam (proc, "mutate")) < 0.001f;
 
         setParam (proc, "mutate", 0.0f);
-        setParam (proc, "noise", 0.42f);
+        setParam (proc, "tape", 0.42f);
 
         proc.randomizeParameters();
 
         const bool keptMutate = std::abs (getParam (proc, "mutate")) < 0.001f;
-        const bool keptNoise  = std::abs (getParam (proc, "noise") - 0.42f) < 0.001f;
+        const bool keptTape   = std::abs (getParam (proc, "tape") - 0.42f) < 0.001f;
 
         std::cout << "random: mutateDefault=" << mutateDefaultsOff
                   << " keptMutate=" << keptMutate
-                  << " keptNoise=" << keptNoise << std::endl;
+                  << " keptTape=" << keptTape << std::endl;
 
-        if (! (mutateDefaultsOff && keptMutate && keptNoise))
+        if (! (mutateDefaultsOff && keptMutate && keptTape))
         {
             ++failures;
-            std::cout << "FAIL: RANDOM changed MUTATE or NOISE" << std::endl;
+            std::cout << "FAIL: RANDOM changed MUTATE or TAPE" << std::endl;
         }
     }
 
@@ -848,6 +848,111 @@ int main()
         }
     }
 
+    // --- (1g2) second voice reaches the synth and the MIDI export -----------
+    {
+        const double sr = 48000.0;
+        const int block = 512;
+
+        struct DuetStats
+        {
+            int maxVoices = 0;
+            int noteOns = 0;
+            int tracks = 0;
+            bool written = false;
+        };
+
+        auto renderDuet = [sr, block] (int role)
+        {
+            VesperaAudioProcessor proc;
+            proc.setPlayConfigDetails (0, 2, sr, block);
+
+            setParam (proc, "key", 0.0f);
+            setParam (proc, "scale", 0.0f);
+            setParam (proc, "poolSize", 4.0f);
+            setParam (proc, "steps", 8.0f);
+            setParam (proc, "density", 1.0f);
+            setParam (proc, "octaves", 1.0f);
+            setParam (proc, "mutate", 0.0f);
+            setParam (proc, "rate", 3.0f);
+            setParam (proc, "gate", 0.5f);
+            setParam (proc, "monitor", 0.0f);
+            setParam (proc, "secondRole", (float) role);
+            setParam (proc, "secondLevel", 0.9f);
+            setParam (proc, "secondDensity", 1.0f);
+            setParam (proc, "secondOctave", 0.0f);
+
+            proc.prepareToPlay (sr, block);
+
+            juce::AudioBuffer<float> buffer (2, block);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 0);
+            midi.addEvent (juce::MidiMessage::noteOn (1, 64, 0.8f), 0);
+            midi.addEvent (juce::MidiMessage::noteOn (1, 67, 0.8f), 0);
+
+            DuetStats stats;
+
+            for (int b = 0; b < 40; ++b)
+            {
+                buffer.clear();
+                proc.processBlock (buffer, midi);
+                midi.clear();
+                stats.maxVoices = juce::jmax (stats.maxVoices, proc.getActiveVoiceCount());
+            }
+
+            auto file = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                            .getChildFile ("vespera_test_duet.mid");
+            file.deleteFile();
+
+            stats.written = proc.writePatternMidiFile (file);
+
+            if (stats.written && file.existsAsFile())
+            {
+                juce::FileInputStream in (file);
+                if (in.openedOk())
+                {
+                    juce::MidiFile mf;
+                    if (mf.readFrom (in))
+                    {
+                        stats.tracks = mf.getNumTracks();
+
+                        for (int t = 0; t < mf.getNumTracks(); ++t)
+                        {
+                            const auto* track = mf.getTrack (t);
+                            for (int i = 0; i < track->getNumEvents(); ++i)
+                                if (track->getEventPointer (i)->message.isNoteOn())
+                                    ++stats.noteOns;
+                        }
+                    }
+                }
+            }
+
+            file.deleteFile();
+            return stats;
+        };
+
+        const auto off = renderDuet (0);   // Off
+        const auto oct = renderDuet (4);   // Octave
+        const auto ans = renderDuet (1);   // Answer
+
+        const bool moreVoices = oct.maxVoices > off.maxVoices;
+        const bool twoTracks  = off.tracks == 1 && oct.tracks == 2;
+        const bool moreNotes  = oct.noteOns > off.noteOns;
+        const bool answerOk   = ans.tracks == 2 && ans.noteOns > off.noteOns;
+
+        std::cout << "second voice: offVoices=" << off.maxVoices
+                  << " octVoices=" << oct.maxVoices
+                  << " offNotes=" << off.noteOns
+                  << " octNotes=" << oct.noteOns
+                  << " tracks=" << off.tracks << "/" << oct.tracks
+                  << " answer=" << answerOk << std::endl;
+
+        if (! (moreVoices && twoTracks && moreNotes && answerOk))
+        {
+            ++failures;
+            std::cout << "FAIL: second voice did not reach the synth / MIDI export" << std::endl;
+        }
+    }
+
     // --- (1h) chords ---------------------------------------------------------
     {
         struct ChordRender
@@ -1221,8 +1326,7 @@ int main()
             setParam (proc, "gate", 1.0f);
             setParam (proc, "wave", 2.0f);          // saw
             setParam (proc, "filterType", 0.0f);    // no filtering
-            setParam (proc, "drive", 0.8f);
-            setParam (proc, "fold", 0.5f);
+            setParam (proc, "tape", 0.8f);
             setParam (proc, "output", 9.0f);
             setParam (proc, "limiter", limiterOn ? 1.0f : 0.0f);
 

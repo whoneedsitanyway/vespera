@@ -12,7 +12,8 @@
 #include "../Source/dsp/Chord.h"
 #include "../Source/dsp/NotePool.h"
 #include "../Source/dsp/PatternEngine.h"
-#include "../Source/dsp/Character.h"
+#include "../Source/dsp/Tape.h"
+#include "../Source/dsp/SecondVoice.h"
 #include "../Source/dsp/Lfo.h"
 #include "../Source/dsp/Limiter.h"
 
@@ -176,7 +177,7 @@ int main()
         }
     }
 
-    // --- (4) character: noise is gated by the notes --------------------------
+    // --- (4) tape: hiss is gated by the notes --------------------------------
     {
         const double sr = 48000.0;
         const int block = 512;
@@ -186,14 +187,14 @@ int main()
         juce::AudioBuffer<float> noisy (2, block);
         juce::AudioBuffer<float> quiet (2, block);
 
-        vespera::Character withNoise, withoutNoise;
-        withNoise.prepare (sr);
-        withoutNoise.prepare (sr);
+        vespera::Tape withTape, withoutTape;
+        withTape.prepare (sr);
+        withoutTape.prepare (sr);
 
-        vespera::CharacterParams noisyParams;
-        noisyParams.noise = 1.0f;
+        vespera::TapeParams tapeParams;
+        tapeParams.amount = 1.0f;
 
-        vespera::CharacterParams cleanParams;
+        vespera::TapeParams cleanParams;
 
         double silencePeak = 0.0;
         double noiseEnergy = 0.0;
@@ -218,8 +219,8 @@ int main()
             noisy.makeCopyOf (dry);
             quiet.makeCopyOf (dry);
 
-            withNoise.process (noisy.getWritePointer (0), noisy.getWritePointer (1), block, noisyParams);
-            withoutNoise.process (quiet.getWritePointer (0), quiet.getWritePointer (1), block, cleanParams);
+            withTape.process (noisy.getWritePointer (0), noisy.getWritePointer (1), block, tapeParams);
+            withoutTape.process (quiet.getWritePointer (0), quiet.getWritePointer (1), block, cleanParams);
 
             for (int ch = 0; ch < 2; ++ch)
             {
@@ -240,37 +241,38 @@ int main()
         const double noiseRms = std::sqrt (noiseEnergy / (double) (blocks / 2 * block * 2));
         const bool gated = silencePeak < 1.0e-6 && noiseRms > 1.0e-4 && noteEnergy > 1.0;
 
-        std::cout << "character: silencePeak=" << silencePeak
+        std::cout << "tape: silencePeak=" << silencePeak
                   << " noiseRms=" << noiseRms
                   << " gated=" << gated << std::endl;
 
         if (! gated)
         {
             ++failures;
-            std::cout << "FAIL: noise is not gated by the notes" << std::endl;
+            std::cout << "FAIL: tape hiss is not gated by the notes" << std::endl;
         }
     }
 
-    // --- (5) character: crush stays gentle at the bottom of the range --------
+    // --- (5) tape stays subtle at the bottom of the range --------------------
     {
         const double sr = 48000.0;
         const int block = 512;
         const int blocks = 20;
 
         juce::AudioBuffer<float> dry (2, block);
-        juce::AudioBuffer<float> crushed (2, block);
+        juce::AudioBuffer<float> taped (2, block);
         juce::AudioBuffer<float> clean (2, block);
 
-        vespera::Character ch, ref;
+        vespera::Tape ch, ref;
         ch.prepare (sr);
         ref.prepare (sr);
 
-        vespera::CharacterParams p;
-        p.crush = 0.15f;
+        vespera::TapeParams p;
+        p.amount = 0.15f;
 
-        vespera::CharacterParams cleanParams;
+        vespera::TapeParams cleanParams;
 
-        double diffEnergy = 0.0, sigEnergy = 0.0;
+        double diffEnergy = 0.0, sigEnergy = 0.0, tapedEnergy = 0.0;
+        double peakDry = 0.0, peakTaped = 0.0;
 
         for (int b = 0; b < blocks; ++b)
         {
@@ -285,29 +287,48 @@ int main()
                 }
             }
 
-            crushed.makeCopyOf (dry);
+            taped.makeCopyOf (dry);
             clean.makeCopyOf (dry);
 
-            ch.process (crushed.getWritePointer (0), crushed.getWritePointer (1), block, p);
+            ch.process (taped.getWritePointer (0), taped.getWritePointer (1), block, p);
             ref.process (clean.getWritePointer (0), clean.getWritePointer (1), block, cleanParams);
 
             for (int c = 0; c < 2; ++c)
                 for (int n = 0; n < block; ++n)
                 {
-                    const double d = (double) crushed.getSample (c, n) - (double) clean.getSample (c, n);
-                    diffEnergy += d * d;
-                    sigEnergy  += (double) clean.getSample (c, n) * (double) clean.getSample (c, n);
+                    const double t = (double) taped.getSample (c, n);
+                    const double d = t - (double) clean.getSample (c, n);
+
+                    diffEnergy  += d * d;
+                    tapedEnergy += t * t;
+                    sigEnergy   += (double) clean.getSample (c, n) * (double) clean.getSample (c, n);
+
+                    peakDry   = juce::jmax (peakDry, (double) std::abs (clean.getSample (c, n)));
+                    peakTaped = juce::jmax (peakTaped, std::abs (t));
                 }
         }
 
-        const double diffRatio = std::sqrt (diffEnergy / juce::jmax (1.0e-12, sigEnergy));
+        const double diffRatio  = std::sqrt (diffEnergy / juce::jmax (1.0e-12, sigEnergy));
+        const double levelRatio = std::sqrt (tapedEnergy / juce::jmax (1.0e-12, sigEnergy));
 
-        std::cout << "character: crushDiffRatio=" << diffRatio << std::endl;
+        // The stage must be clearly active, but it has to stay musical: the
+        // wow moves the signal in time (so the sample difference is large by
+        // design), which is why "gentle" is judged by level and peak instead
+        // of by the raw waveform difference.  The old bottom of the range was
+        // silent; the old top of the range clipped and fuzzed.
+        const bool gentle = diffRatio > 0.002
+                            && levelRatio > 0.85 && levelRatio < 1.20
+                            && peakTaped < peakDry * 1.15;
 
-        if (diffRatio > 0.05)
+        std::cout << "tape: lowDiffRatio=" << diffRatio
+                  << " levelRatio=" << levelRatio
+                  << " peaks=" << peakDry << "/" << peakTaped
+                  << " gentle=" << gentle << std::endl;
+
+        if (! gentle)
         {
             ++failures;
-            std::cout << "FAIL: crush is too aggressive at a low setting" << std::endl;
+            std::cout << "FAIL: tape is inaudible or too aggressive at a low setting" << std::endl;
         }
     }
 
@@ -421,25 +442,21 @@ int main()
         }
     }
 
-    // --- (9) fold and ring are transparent at zero and bounded at max -------
+    // --- (9) tape is transparent at zero and bounded at max -----------------
     {
         const double sr = 48000.0;
         const int block = 512;
 
         juce::AudioBuffer<float> a (2, block), b (2, block), c (2, block);
 
-        vespera::Character clean, folded, ringed;
+        vespera::Tape clean, taped;
         clean.prepare (sr);
-        folded.prepare (sr);
-        ringed.prepare (sr);
+        taped.prepare (sr);
 
-        vespera::CharacterParams pFold;
-        pFold.fold = 1.0f;
+        vespera::TapeParams pMax;
+        pMax.amount = 1.0f;
 
-        vespera::CharacterParams pRing;
-        pRing.ring = 1.0f;
-
-        double zeroDiff = 0.0, foldPeak = 0.0, ringPeak = 0.0;
+        double zeroDiff = 0.0, maxPeak = 0.0, maxDiff = 0.0;
 
         for (int blk = 0; blk < 30; ++blk)
         {
@@ -458,27 +475,143 @@ int main()
             c.makeCopyOf (a);
 
             clean.process (a.getWritePointer (0), a.getWritePointer (1), block, {});
-            folded.process (b.getWritePointer (0), b.getWritePointer (1), block, pFold);
-            ringed.process (c.getWritePointer (0), c.getWritePointer (1), block, pRing);
+            taped.process (b.getWritePointer (0), b.getWritePointer (1), block, pMax);
 
             for (int ch = 0; ch < 2; ++ch)
                 for (int n = 0; n < block; ++n)
                 {
+                    // `c` holds the untouched input: amount 0 must not change it.
                     zeroDiff = juce::jmax (zeroDiff,
-                                           (double) std::abs (b.getSample (ch, n)
+                                           (double) std::abs (a.getSample (ch, n)
                                                                   - c.getSample (ch, n)));
-                    foldPeak = juce::jmax (foldPeak, (double) std::abs (b.getSample (ch, n)));
-                    ringPeak = juce::jmax (ringPeak, (double) std::abs (c.getSample (ch, n)));
+                    maxPeak = juce::jmax (maxPeak, (double) std::abs (b.getSample (ch, n)));
+                    maxDiff = juce::jmax (maxDiff,
+                                          (double) std::abs (b.getSample (ch, n)
+                                                                 - c.getSample (ch, n)));
                 }
         }
 
-        std::cout << "character: foldPeak=" << foldPeak
-                  << " ringPeak=" << ringPeak << std::endl;
+        std::cout << "tape: zeroDiff=" << zeroDiff
+                  << " maxPeak=" << maxPeak
+                  << " maxDiff=" << maxDiff << std::endl;
 
-        if (! (foldPeak < 1.2 && ringPeak < 1.2 && zeroDiff > 0.01))
+        if (! (zeroDiff < 1.0e-9 && maxPeak < 1.2 && maxDiff > 0.01))
         {
             ++failures;
-            std::cout << "FAIL: fold / ring are silent, unbounded or identical" << std::endl;
+            std::cout << "FAIL: tape is not transparent at zero, unbounded or silent at max" << std::endl;
+        }
+    }
+
+    // --- (10) second voice stays musical and in key -------------------------
+    {
+        using namespace vespera;
+
+        const int pool[4] = { 60, 64, 67, 72 };   // C major triad + octave
+
+        PatternParams pp;
+        pp.steps = 8;
+        pp.density = 1.0f;
+        pp.octaves = 1;
+        pp.contour = kContourUp;
+        pp.mutate = 0.0f;
+        pp.key = 0;
+        pp.scale = 0;   // major
+
+        juce::Random rngLead (42), rngAnswer (43);
+        PatternEngine lead, answer;
+        lead.regenerate (pool, 4, pp, rngLead);
+        answer.regenerate (pool, 4, pp, rngAnswer);
+
+        SecondVoiceParams sv;
+        sv.level = 1.0f;
+        sv.density = 1.0f;
+
+        bool allInScale = true;
+        bool octaveOk = true;
+        bool bassOk = true;
+        bool answerOk = true;
+        bool densityZeroOff = true;
+
+        // Octave doubles the lead an octave up.
+        sv.role = kSecondOctave;
+        sv.octave = 0;
+        for (int i = 0; i < pp.steps; ++i)
+        {
+            const auto& s = lead.getStep (i);
+            const int leadPitch = pool[juce::jlimit (0, 3, s.poolIndex)] + 12 * s.octave;
+            const auto sn = secondVoiceAt (i, pp.steps, s, &answer, pool, 4,
+                                           sv, pp.key, pp.scale, 0);
+
+            if (! sn.active || sn.note != juce::jlimit (0, 127, leadPitch + 12))
+                octaveOk = false;
+        }
+
+        // Bass sits one octave below the lead root.
+        sv.role = kSecondBass;
+        for (int i = 0; i < pp.steps; ++i)
+        {
+            const auto& s = lead.getStep (i);
+            const int leadPitch = pool[juce::jlimit (0, 3, s.poolIndex)] + 12 * s.octave;
+            const auto sn = secondVoiceAt (i, pp.steps, s, &answer, pool, 4,
+                                           sv, pp.key, pp.scale, 0);
+
+            if (! sn.active || sn.note != juce::jlimit (0, 127, leadPitch - 12))
+                bassOk = false;
+        }
+
+        // Answer reads its own line, delayed by OFFSET steps.
+        sv.role = kSecondAnswer;
+        sv.offset = 2;
+        for (int i = 0; i < pp.steps; ++i)
+        {
+            const auto& s = answer.getStep ((i - 2 + pp.steps) % pp.steps);
+            const auto sn = secondVoiceAt (i, pp.steps, lead.getStep (i), &answer, pool, 4,
+                                           sv, pp.key, pp.scale, 0);
+
+            const bool expected = s.active;
+            const int expectedNote = expected
+                ? juce::jlimit (0, 127, pool[juce::jlimit (0, 3, s.poolIndex)] + 12 * s.octave)
+                : -1;
+
+            if (sn.active != expected || (expected && sn.note != expectedNote))
+                answerOk = false;
+        }
+
+        // Harmony and drone must stay inside the key for every role/interval.
+        for (int role = kSecondBass; role < kNumSecondRoles; ++role)
+        {
+            sv.role = role;
+            for (int interval = 0; interval < 4; ++interval)
+            {
+                sv.interval = interval;
+                for (int i = 0; i < pp.steps; ++i)
+                {
+                    const auto sn = secondVoiceAt (i, pp.steps, lead.getStep (i), &answer,
+                                                   pool, 4, sv, pp.key, pp.scale, 0);
+                    if (sn.active && ! Scale::isInScale (sn.note, pp.key, pp.scale))
+                        allInScale = false;
+                }
+            }
+        }
+
+        // Density 0 silences the second voice (Off is covered separately).
+        sv.role = kSecondHarmony;
+        sv.density = 0.0f;
+        for (int i = 0; i < pp.steps; ++i)
+            if (secondVoiceAt (i, pp.steps, lead.getStep (i), &answer, pool, 4,
+                               sv, pp.key, pp.scale, 0).active)
+                densityZeroOff = false;
+
+        std::cout << "second voice: octave=" << octaveOk
+                  << " bass=" << bassOk
+                  << " answer=" << answerOk
+                  << " inScale=" << allInScale
+                  << " densityZeroOff=" << densityZeroOff << std::endl;
+
+        if (! (octaveOk && bassOk && answerOk && allInScale && densityZeroOff))
+        {
+            ++failures;
+            std::cout << "FAIL: second voice broke its musical contract" << std::endl;
         }
     }
 

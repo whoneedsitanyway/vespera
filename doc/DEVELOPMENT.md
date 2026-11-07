@@ -85,13 +85,14 @@ Source/
     PolySynth.h               полисинтез (24 голоса, 2 осциллятора, PolyBLEP, ADSR)
     ResonantFilter.h          TPT state-variable фильтр (LP/BP/HP) + env follower
     Lfo.h                   источник модуляции (7 форм, free/sync)
-    Character.h               drive / crush / noise / wow / fold / ring
+    Tape.h                    один макрос: tone / saturation / wow / gated hiss
+    SecondVoice.h             Answer / Bass / Harmony / Octave / Drone
     Limiter.h                 выходной пиковый лимитер (вкл/выкл, мягкий потолок)
   ui/
     VesperaLookAndFeel.h/.cpp LookAndFeel, темы, IconButton
     PatternDisplay.h/.cpp     визуализация пула, шагов и playhead
 Tests/
-  GeneratorTest.cpp           офлайн-тесты стройблоков (лады, пул, паттерн, character, LFO, лимитер, rate)
+  GeneratorTest.cpp           офлайн-тесты стройблоков (лады, пул, паттерн, tape, второй голос, LFO, лимитер, rate)
   SynthTest.cpp               голоса: звук/релиз, конечность, voice stealing
   PluginTest.cpp              реальный процессор + редактор: генерация, пресеты,
                               состояние, MIDI-экспорт, Play Sync, UI-блокировки
@@ -123,8 +124,10 @@ done
   reverse-контур зеркалится; структура фразы (мотив A B A C повторяется,
   скачки ограничены, скачок получает ответ в обратную сторону, каденция на
   устойчивой ступени, октава на секцию);
-  аккорды диатоничны и упорядочены (включая пентатонику); character (шум
-  гейтится, crush меняет сигнал, fold/ring ограничены); LFO в диапазоне и
+  аккорды диатоничны и упорядочены (включая пентатонику); tape (хисс гейтится
+  нотами, на малом значении слышен но мягок, на нуле прозрачен, на максимуме
+  ограничен); второй голос (октава, бас, ответ, все роли в ладу, density = 0
+  выключает); LFO в диапазоне и
   varies; лимитер держит горячий вход и не трогает тихий; таблица `rate`
   согласована с именами.
 - `VesperaSynthTest` — ноты звучат и уходят в тишину; экстремальные настройки

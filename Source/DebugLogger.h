@@ -18,9 +18,9 @@ struct BlockSnapshot
 {
     double timeSec = 0.0;
 
-    float inPeak   = 0.0f;
-    float charPeak = 0.0f;
-    float outPeak  = 0.0f;
+    float inPeak    = 0.0f;
+    float tapePeak  = 0.0f;
+    float outPeak   = 0.0f;
 
     int   key = 0, scale = 1, poolSize = 0, steps = 8, octaves = 2, contour = 2;
     int   wave = 1, filterType = 1, activeVoices = 0, currentStep = 0;
@@ -30,8 +30,9 @@ struct BlockSnapshot
     float attack = 0.0f, decay = 0.0f, sustain = 0.0f, release = 0.0f, detune = 0.0f;
     float filterCutoff = 0.0f, filterReso = 0.0f, filterEnv = 0.0f;
     float lfoRate = 0.0f, motion = 0.0f;
-    float drive = 0.0f, crush = 0.0f, noise = 0.0f, wow = 0.0f;
-    float fold = 0.0f, ring = 0.0f;
+    float tape = 0.0f;
+    int   secondRole = 0, secondOctave = 0, secondOffset = 0, secondInterval = 0;
+    float secondDensity = 0.0f, secondLevel = 0.0f;
     float output = 0.0f, bpm = 120.0f;
     float grDb = 0.0f;             // limiter gain reduction
 

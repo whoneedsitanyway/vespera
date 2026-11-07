@@ -127,6 +127,8 @@ VesperaAudioProcessorEditor::VesperaAudioProcessorEditor (VesperaAudioProcessor&
     addKnob (sustain, ids::sustain, "SUSTAIN", "SUSTAIN - envelope sustain level");
     addKnob (release, ids::release, "RELEASE", "RELEASE - envelope release time");
     addKnob (detune,  ids::detune,  "DETUNE",  "DETUNE - spread between the two oscillators");
+    addKnob (tape,    ids::tape,    "TAPE",
+             "TAPE - one musical macro: warmth, gentle pitch drift and (only high up) gated hiss");
 
     // --- FILTER --------------------------------------------------------------
     addCombo (filterTypeCombo, ids::filterType, "TYPE",
@@ -153,13 +155,23 @@ VesperaAudioProcessorEditor::VesperaAudioProcessorEditor (VesperaAudioProcessor&
     lfoSyncButton.onClick = [this] { updateLfoRateUi(); };
     updateLfoRateUi();
 
-    // --- CHARACTER -----------------------------------------------------------
-    addKnob (drive, ids::drive, "DRIVE", "DRIVE - tape-style saturation");
-    addKnob (crush, ids::crush, "CRUSH", "CRUSH - bit-depth and sample-rate reduction");
-    addKnob (noise, ids::noise, "NOISE", "NOISE - hiss and vinyl crackle, only while notes sound");
-    addKnob (wow,   ids::wow,   "WOW",   "WOW - tape wow and flutter");
-    addKnob (fold,  ids::fold,  "FOLD",  "FOLD - wave folding, from soft harmonics to metallic");
-    addKnob (ring,  ids::ring,  "RING",  "RING - ring modulation, tremolo at low settings");
+    // --- SECOND VOICE --------------------------------------------------------
+    addCombo (secondRoleCombo, ids::secondRole, "ROLE",
+              getSecondRoleNames(),
+              "ROLE - Off, a delayed Answer line, a Bass root, a diatonic Harmony, "
+              "an Octave double or a Drone pedal");
+    addCombo (secondIntervalCombo, ids::secondInterval, "INTERVAL",
+              getSecondIntervalNames(),
+              "INTERVAL - diatonic distance below the lead for HARMONY");
+
+    addKnob (secondOctave,  ids::secondOctave,  "REGISTER",
+             "REGISTER - octave shift of the second voice (-2..+2)");
+    addKnob (secondOffset,  ids::secondOffset,  "OFFSET",
+             "OFFSET - how many steps the ANSWER line lags behind the lead");
+    addKnob (secondDensity, ids::secondDensity, "DENSITY",
+             "DENSITY - how often the second voice plays");
+    addKnob (secondLevel,   ids::secondLevel,   "LEVEL",
+             "LEVEL - velocity of the second voice relative to the lead");
 
     // --- OUTPUT --------------------------------------------------------------
     addKnob (output, ids::output, "OUTPUT", "OUTPUT - output level");
@@ -189,7 +201,7 @@ VesperaAudioProcessorEditor::VesperaAudioProcessorEditor (VesperaAudioProcessor&
         b.setTooltip (tip);
         b.setConnectedEdges (0);
     };
-    styleHeaderButton (randomButton,  "RANDOM - new key, pattern, voice and character; seeds the pool with a chord");
+    styleHeaderButton (randomButton,  "RANDOM - new key, pattern, voice and duet; seeds the pool with a chord");
     styleHeaderButton (compactButton, "Toggle compact mode (hide the pattern display)");
 
     randomButton.onClick  = [this] { processorRef.randomizeParameters(); };
@@ -356,15 +368,15 @@ void VesperaAudioProcessorEditor::refreshThemedColours()
 
     for (auto* k : { &poolSize, &steps, &density, &octaves, &mutate, &swing, &gate, &accent,
                      &transpose,
-                     &attack, &decay, &sustain, &release, &detune,
+                     &attack, &decay, &sustain, &release, &detune, &tape,
                      &cutoff, &filterReso, &filterEnv, &motion, &lfoRateHz,
-                     &drive, &crush, &noise, &wow, &fold, &ring,
+                     &secondOctave, &secondOffset, &secondDensity, &secondLevel,
                      &output })
         k->label.setColour (juce::Label::textColourId, text);
 
     for (auto* c : { &keyCombo, &scaleCombo, &rateCombo, &contourCombo,
                      &waveCombo, &filterTypeCombo, &filterShapeCombo,
-                     &filterRateCombo })
+                     &filterRateCombo, &secondRoleCombo, &secondIntervalCombo })
         c->label.setColour (juce::Label::textColourId, text);
 
     presetBox.setColour (juce::ComboBox::textColourId, accentColour);
@@ -522,7 +534,7 @@ void VesperaAudioProcessorEditor::paint (juce::Graphics& g)
                        findColour (VesperaLookAndFeel::coolColourId));
     paintSectionLabel (g, filterArea,  "FILTER",
                        findColour (VesperaLookAndFeel::accentColourId));
-    paintSectionLabel (g, charArea,    "CHARACTER",
+    paintSectionLabel (g, secondArea,  "SECOND VOICE",
                        findColour (VesperaLookAndFeel::hotColourId));
     paintSectionLabel (g, outArea,     "OUTPUT",
                        findColour (VesperaLookAndFeel::accentDimColourId));
@@ -580,7 +592,7 @@ void VesperaAudioProcessorEditor::resized()
     inner.removeFromLeft (gap);
     filterArea = inner.removeFromLeft (colW);
     inner.removeFromLeft (gap);
-    charArea = inner.removeFromLeft (colW);
+    secondArea = inner.removeFromLeft (colW);
     inner.removeFromLeft (gap);
     outArea = inner;
 
@@ -653,7 +665,7 @@ void VesperaAudioProcessorEditor::resized()
         col.removeFromTop (20);
         placeCombo (waveCombo, col);
         col.removeFromTop (2);
-        placeGrid ({ &attack, &decay, &sustain, &release, &detune }, col, 2);
+        placeGrid ({ &attack, &decay, &sustain, &release, &detune, &tape }, col, 2);
     }
 
     // FILTER
@@ -681,11 +693,14 @@ void VesperaAudioProcessorEditor::resized()
         placeGrid ({ &cutoff, &filterReso, &filterEnv, &motion }, col, 2);
     }
 
-    // CHARACTER
+    // SECOND VOICE
     {
-        auto col = charArea.reduced (10, 8);
+        auto col = secondArea.reduced (10, 8);
         col.removeFromTop (20);
-        placeGrid ({ &drive, &crush, &noise, &wow, &fold, &ring }, col, 2);
+        placeCombo (secondRoleCombo, col);
+        placeCombo (secondIntervalCombo, col);
+        col.removeFromTop (2);
+        placeGrid ({ &secondOctave, &secondOffset, &secondDensity, &secondLevel }, col, 2);
     }
 
     // OUTPUT

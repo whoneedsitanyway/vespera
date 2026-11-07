@@ -15,8 +15,8 @@ namespace vespera
 //  Two detuned oscillators per voice (sine / triangle / saw / square with
 //  PolyBLEP anti-aliasing on the discontinuous waveforms), a standard ADSR and
 //  a small per-note pan spread.  It is deliberately simple and clean: the
-//  character comes from the pattern generator and the Character section, not
-//  from a heavy oscillator stack.
+//  character comes from the pattern generator, the Tape macro and the second
+//  voice, not from a heavy oscillator stack.
 //==============================================================================
 class PolySynth
 {

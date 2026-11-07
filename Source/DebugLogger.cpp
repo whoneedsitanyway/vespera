@@ -202,7 +202,7 @@ juce::String DebugLogger::formatLine (const BlockSnapshot& s, bool anomaly)
     line << (anomaly ? "  " : "")
          << "t=" << juce::String (s.timeSec, 2) << "s"
          << "  synth=" << juce::String (s.inPeak, 4)
-         << " char=" << juce::String (s.charPeak, 4)
+         << " tapePeak=" << juce::String (s.tapePeak, 4)
          << " out=" << juce::String (s.outPeak, 4)
          << "  bpm=" << juce::String (s.bpm, 1)
          << " voices=" << s.activeVoices
@@ -233,12 +233,13 @@ juce::String DebugLogger::formatLine (const BlockSnapshot& s, bool anomaly)
          << (s.lfoSynced ? "sync" : "hz")
          << " shape=" << s.lfoShape
          << " motion=" << juce::String (s.motion, 2)
-         << "  drive=" << juce::String (s.drive, 2)
-         << " crush=" << juce::String (s.crush, 2)
-         << " noise=" << juce::String (s.noise, 2)
-         << " wow=" << juce::String (s.wow, 2)
-         << " fold=" << juce::String (s.fold, 2)
-         << " ring=" << juce::String (s.ring, 2)
+         << "  tape=" << juce::String (s.tape, 2)
+         << "  duet=" << s.secondRole
+         << "/" << s.secondOctave
+         << "/" << s.secondOffset
+         << "/" << s.secondInterval
+         << "/" << juce::String (s.secondDensity, 2)
+         << "/" << juce::String (s.secondLevel, 2)
          << "  out=" << juce::String (s.output, 1)
          << " LIM=" << (s.limiterOn ? 1 : 0)
          << " GR=" << juce::String (s.grDb, 1)

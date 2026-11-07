@@ -11,7 +11,8 @@
 #include "dsp/PatternEngine.h"
 #include "dsp/PolySynth.h"
 #include "dsp/ResonantFilter.h"
-#include "dsp/Character.h"
+#include "dsp/Tape.h"
+#include "dsp/SecondVoice.h"
 #include "dsp/Lfo.h"
 #include "dsp/Limiter.h"
 #include "DebugLogger.h"
@@ -60,13 +61,16 @@ namespace vespera
         static constexpr const char* lfoShape     = "lfoShape";
         static constexpr const char* motion       = "motion";
 
-        // Character.
-        static constexpr const char* drive = "drive";
-        static constexpr const char* crush = "crush";
-        static constexpr const char* noise = "noise";
-        static constexpr const char* wow   = "wow";
-        static constexpr const char* fold  = "fold";
-        static constexpr const char* ring  = "ring";
+        // Voice material: one musical tape macro instead of six effects.
+        static constexpr const char* tape = "tape";
+
+        // Second voice (duet).
+        static constexpr const char* secondRole     = "secondRole";
+        static constexpr const char* secondInterval = "secondInterval";
+        static constexpr const char* secondOctave   = "secondOctave";
+        static constexpr const char* secondOffset   = "secondOffset";
+        static constexpr const char* secondDensity  = "secondDensity";
+        static constexpr const char* secondLevel    = "secondLevel";
 
         // Output.
         static constexpr const char* output  = "output";
@@ -88,6 +92,11 @@ namespace vespera
         float velocity[PatternEngine::kMaxSteps] {};
         juce::uint8 chordMask[PatternEngine::kMaxSteps] {};
         juce::uint8 chordInversion[PatternEngine::kMaxSteps] {};
+        bool  secondActive[PatternEngine::kMaxSteps] {};
+        int   secondNote[PatternEngine::kMaxSteps] {};
+        float secondVelocity[PatternEngine::kMaxSteps] {};
+        float secondLength[PatternEngine::kMaxSteps] {};
+        int   secondRole = 0;
         int  key = 0;
         int  scale = 1;
         int  transpose = 0;
@@ -129,7 +138,7 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
-    // Randomises the pattern / voice / character parameters and seeds the note
+    // Randomises the pattern / voice / second voice parameters and seeds the note
     // pool with a chord in the current key.  Message thread only.
     void randomizeParameters();
 
@@ -211,12 +220,14 @@ private:
         std::atomic<float>* lfoShape     = nullptr;
         std::atomic<float>* motion       = nullptr;
 
-        std::atomic<float>* drive = nullptr;
-        std::atomic<float>* crush = nullptr;
-        std::atomic<float>* noise = nullptr;
-        std::atomic<float>* wow   = nullptr;
-        std::atomic<float>* fold  = nullptr;
-        std::atomic<float>* ring  = nullptr;
+        std::atomic<float>* tape = nullptr;
+
+        std::atomic<float>* secondRole     = nullptr;
+        std::atomic<float>* secondInterval = nullptr;
+        std::atomic<float>* secondOctave   = nullptr;
+        std::atomic<float>* secondOffset   = nullptr;
+        std::atomic<float>* secondDensity  = nullptr;
+        std::atomic<float>* secondLevel    = nullptr;
 
         std::atomic<float>* output = nullptr;
         std::atomic<float>* limiter = nullptr;
@@ -234,6 +245,7 @@ private:
     void ensurePattern (const int* poolNotes, int n, const vespera::PatternParams& pp);
     void updatePatternView (const int* poolNotes, int poolSize);
     vespera::PatternParams currentPatternParams() const;
+    vespera::SecondVoiceParams currentSecondParams() const;
     static double lfoRateInBeats (int rateIndex);
 
     double currentSampleRate = 48000.0;
@@ -241,9 +253,10 @@ private:
 
     vespera::NotePool      notePool;
     vespera::PatternEngine pattern;
+    vespera::PatternEngine secondPattern;
     vespera::PolySynth     synth;
     vespera::ResonantFilter filter;
-    vespera::Character      character;
+    vespera::Tape          tape;
     vespera::Lfo            lfo;
     vespera::Limiter        outputLimiter;
 
@@ -254,6 +267,7 @@ private:
     double samplesToNextStep = 0.0;
     int    currentStep = 0;
     bool   patternDirty = true;
+    bool   secondPatternDirty = true;
     int    lastKey = -1;
     int    lastScale = -1;
     int    lastPoolSizeParam = -1;
@@ -261,6 +275,8 @@ private:
     int    lastOctaves = -1;
     int    lastContour = -1;
     float  lastAccent = -1.0f;
+    float  lastSecondDensity = -1.0f;
+    int    lastSecondContour = -1;
     std::atomic<bool> pendingPoolClear { false };
 
     // RANDOM publishes the pool it wants; the audio thread applies it at the top

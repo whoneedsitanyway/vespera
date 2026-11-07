@@ -89,7 +89,7 @@ private:
 
     // VOICE
     Combo waveCombo;
-    Knob attack, decay, sustain, release, detune;
+    Knob attack, decay, sustain, release, detune, tape;
 
     // FILTER
     Combo filterTypeCombo, filterShapeCombo, filterRateCombo;
@@ -97,8 +97,9 @@ private:
     juce::ToggleButton lfoSyncButton { "Sync" };
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfoSyncAttach;
 
-    // CHARACTER
-    Knob drive, crush, noise, wow, fold, ring;
+    // SECOND VOICE
+    Combo secondRoleCombo, secondIntervalCombo;
+    Knob secondOctave, secondOffset, secondDensity, secondLevel;
 
     // OUTPUT
     Knob output;
@@ -137,7 +138,7 @@ private:
     static constexpr int kCompactHeight = 600;
 
     juce::Rectangle<int> enclosure;
-    juce::Rectangle<int> notesArea, patternArea, voiceArea, filterArea, charArea, outArea;
+    juce::Rectangle<int> notesArea, patternArea, voiceArea, filterArea, secondArea, outArea;
     juce::Rectangle<int> displayArea;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (VesperaAudioProcessorEditor)
