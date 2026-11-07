@@ -53,11 +53,12 @@
 - [x] **PolySynth** — 24 голоса, 2 осциллятора на голос (Sine/Triangle/Saw/Square),
       **PolyBLEP** на разрывных формах, ADSR, voice stealing по возрасту.
 - [x] **Detune** (0..22 цента) и **панорама по ноте** (cos/sin law, ±0.7).
-- [x] **ResonantFilter** — TPT state-variable (Off/LP/BP/HP), резонанс до Q≈16,
-      env follower (2 мс / 180 мс) до +3 октав, мягкий потолок tanh.
+- [x] **VoiceFilter** — TPT state-variable **в каждом голосе** (Off/LP/BP/HP),
+      резонанс до Q≈16, собственная огибающая среза на ноту (до +3 октав),
+      key tracking, velocity → срез, мягкий потолок tanh.
 - [x] **LFO** — 7 форм (Sine, Triangle, Saw Up, Saw Down, Square, Random, Walk),
-      свободная частота 0.02..20 Гц или синк к темпу (8 делений 4/1…1/32),
-      глубина Motion (до ±2 октав).
+      свободная частота 0.05..10 Гц или синк к темпу (8 делений 4/1…1/32),
+      глубина Motion (до ±2.5 октав), продвижение на чанк ≤ 64 сэмпла.
 - [x] **Tape** — один музыкальный макрос вместо шести ручек Character:
       мягкий спад верха с первых процентов, ограниченная сатурация,
       wow/flutter ≤ ~8 центов, хисс только на верхнем краю и по гейту нот.
@@ -89,7 +90,7 @@
       нобы-цилиндры с кольцом рисок, переключаемая **тёмная / мягкая светлая**
       тема с сохранением выбора (`theme.txt`).
 - [x] **IconButton** — векторные иконки Save / Sun / Moon / Log + красный бейдж.
-- [x] Секции NOTES / PATTERN / VOICE / FILTER / SECOND VOICE / OUTPUT,
+- [x] Секции по сигналу: NOTES / PATTERN / VOICE / SECOND VOICE / FILTER / OUTPUT,
       подписи секций своим цветом, корпус с винтами.
 - [x] **PatternDisplay** — пул (имена нот), тональность, транспозиция, BPM,
       число голосов, сетка шагов (высота = velocity, подпись = нота),
@@ -108,7 +109,7 @@
 - [x] `PresetManager` — XML-пресеты `*.vesperapreset` в
       `~/Library/Application Support/Vespera/Presets`, имена санитизируются.
 - [x] **Заводские пресеты** вшиты в бинарь (`FactoryPresets.h`),
-      версионированная переустановка (`factory_version.txt`, версия 8).
+      версионированная переустановка (`factory_version.txt`, версия 11).
 - [x] 8 пресетов: `First Light`, `Rain Arp`, `Broken Music Box`, `Deep Pulse`,
       `Glass Steps`, `Tape Lullaby`, `Acid Walk`, `Frozen Motif`.
 - [x] Дефолт при открытии свежего экземпляра — **`First Light`**;
@@ -136,7 +137,7 @@
 ### Устойчивость и диагностика
 
 - [x] Финальный предохранитель: нефинитные → 0, конечные выбросы → кламп ±1.0.
-- [x] Детект «разгона» (пик до лимитера > 32) → сброс synth/filter/tape.
+- [x] Детект «разгона» (пик до лимитера > 32) → сброс synth/tape.
 - [x] `ScopedNoDenormals`, проверка `isfinite` на входе Tape.
 - [x] Мягкие потолки в фильтре и лимитере — экстремальный резонанс не разгоняется.
 - [x] **DebugLogger** — «чёрный ящик»: lock-free FIFO снапшотов

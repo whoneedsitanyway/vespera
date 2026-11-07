@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <algorithm>
 
+#include "VoiceFilter.h"
+
 namespace vespera
 {
 
@@ -13,10 +15,11 @@ namespace vespera
 //  Compact polyphonic synth voice engine.
 //
 //  Two detuned oscillators per voice (sine / triangle / saw / square with
-//  PolyBLEP anti-aliasing on the discontinuous waveforms), a standard ADSR and
-//  a small per-note pan spread.  It is deliberately simple and clean: the
-//  character comes from the pattern generator, the Tape macro and the second
-//  voice, not from a heavy oscillator stack.
+//  PolyBLEP anti-aliasing on the discontinuous waveforms), a standard ADSR, a
+//  per-voice resonant filter and a small per-note pan spread.  It is
+//  deliberately simple and clean: the character comes from the pattern
+//  generator, the Tape macro and the second voice, not from a heavy oscillator
+//  stack.
 //==============================================================================
 class PolySynth
 {
@@ -28,14 +31,27 @@ public:
     void prepare (double sampleRate)
     {
         sr = sampleRate;
-        setParams (wave, attack, decay, sustain, release, detune);
+
+        // reset() prepares every voice filter with the new sample rate.
         reset();
+
+        // reset() clears the voices, so the envelope parameters have to be
+        // pushed again; otherwise the first block would run on the JUCE defaults
+        // until the user touches a voice knob.
+        setParams (wave, attack, decay, sustain, release, detune);
     }
 
     void reset()
     {
         for (auto& v : voices)
+        {
             v = {};
+            v.filter.prepare (sr);
+        }
+
+        // The voices now hold default ADSRs, so the next setParams() must not
+        // take its "nothing changed" early exit.
+        paramsInitialised = false;
         ageCounter = 0;
     }
 
@@ -84,18 +100,37 @@ public:
         startVoice (note, velocity, juce::jmax (1, durationSamples));
     }
 
+    // Per-voice filter settings.  The LFO is global, so it is passed in already
+    // scaled and simply added to each voice's cutoff.
+    void setFilterParams (const VoiceFilterParams& p)
+    {
+        filterParams = p;
+
+        // Idle voices pick the settings up in startVoice(); updating them here
+        // would cost 24 copies per render chunk for nothing.
+        for (auto& v : voices)
+            if (v.active)
+                v.filter.setParams (filterParams);
+    }
+
     void noteOff (int note)
     {
         for (auto& v : voices)
             if (v.active && v.note == note && v.remaining < 0)
+            {
                 v.adsr.noteOff();
+                v.filter.noteOff();
+            }
     }
 
     void allNotesOff()
     {
         for (auto& v : voices)
             if (v.active)
+            {
                 v.adsr.noteOff();
+                v.filter.noteOff();
+            }
     }
 
     void render (float* L, float* R, int numSamples)
@@ -130,6 +165,7 @@ public:
                     if (--v.remaining == 0)
                     {
                         v.adsr.noteOff();
+                        v.filter.noteOff();
                         v.remaining = -1;
                     }
                 }
@@ -145,8 +181,12 @@ public:
                 const float b = oscillator (v.phase2, (float) inc2, wave);
                 const float s = 0.5f * (a + b) * env * level;
 
-                L[n] += s * gainL;
-                R[n] += s * gainR;
+                // Filter the mono voice before the pan spread: a resonant peak
+                // belongs to the note, not to the stereo image.
+                const float f = v.filter.process (s);
+
+                L[n] += f * gainL;
+                R[n] += f * gainR;
 
                 v.phase1 += inc1;
                 if (v.phase1 >= 1.0) v.phase1 -= 1.0;
@@ -175,6 +215,7 @@ private:
         double phase1 = 0.0;
         double phase2 = 0.25;
         juce::ADSR adsr;
+        VoiceFilter filter;
         uint64_t age = 0;
     };
 
@@ -203,6 +244,12 @@ private:
         slot->age = ++ageCounter;
         slot->adsr.reset();
         slot->adsr.noteOn();
+
+        // A stolen or freshly started voice has to pick up the current filter
+        // settings before its first sample; setFilterParams() only reaches the
+        // voices that existed at the time of the call.
+        slot->filter.setParams (filterParams);
+        slot->filter.noteOn (slot->note, slot->velocity);
     }
 
     static bool changed (float a, float b) noexcept { return std::abs (a - b) > 1.0e-7f; }
@@ -258,6 +305,8 @@ private:
     int    wave = 1;
     float  attack = 0.005f, decay = 0.25f, sustain = 0.6f, release = 0.4f, detune = 0.15f;
     bool   paramsInitialised = false;
+
+    VoiceFilterParams filterParams;
 
     std::array<Voice, kMaxVoices> voices {};
     uint64_t ageCounter = 0;

@@ -1101,7 +1101,174 @@ int main()
     }
 
 
+    // --- (1g4) per-voice filter reaches the synth -----------------------------
+    // The filter used to sit after the mix, so it was easy to break the wiring
+    // between the parameters and the voices.  This renders the same pattern with
+    // the filter off and with a low LP cutoff: the LP render has to be darker.
+    {
+        const double sr = 48000.0;
+        const int block = 512;
+
+        struct FilterStats
+        {
+            double brightness = 0.0;
+            double peak = 0.0;
+        };
+
+        auto renderFiltered = [sr, block] (int type, float cutoff)
+        {
+            VesperaAudioProcessor proc;
+            proc.setPlayConfigDetails (0, 2, sr, block);
+
+            setParam (proc, "key", 0.0f);
+            setParam (proc, "scale", 1.0f);
+            setParam (proc, "poolSize", 4.0f);
+            setParam (proc, "steps", 8.0f);
+            setParam (proc, "density", 1.0f);
+            setParam (proc, "octaves", 1.0f);
+            setParam (proc, "mutate", 0.0f);
+            setParam (proc, "rate", 3.0f);
+            setParam (proc, "gate", 0.6f);
+            setParam (proc, "monitor", 0.0f);
+            setParam (proc, "wave", 2.0f);          // saw: enough harmonics to hear a cutoff
+            setParam (proc, "secondRole", 0.0f);
+            setParam (proc, "chords", 0.0f);
+            setParam (proc, "tape", 0.0f);
+            setParam (proc, "limiter", 0.0f);
+            setParam (proc, "output", 0.0f);
+            setParam (proc, "filterType", (float) type);
+            setParam (proc, "filterCutoff", cutoff);
+            setParam (proc, "filterReso", 0.0f);
+            setParam (proc, "filterEnv", 0.0f);
+            setParam (proc, "filterKey", 0.0f);
+            setParam (proc, "filterVel", 0.0f);
+            setParam (proc, "motion", 0.0f);
+
+            proc.seedRandomForTests (4242);
+            proc.prepareToPlay (sr, block);
+
+            juce::AudioBuffer<float> buffer (2, block);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 0);
+            midi.addEvent (juce::MidiMessage::noteOn (1, 63, 0.8f), 0);
+            midi.addEvent (juce::MidiMessage::noteOn (1, 67, 0.8f), 0);
+
+            FilterStats stats;
+            double diff = 0.0, energy = 0.0;
+            float previous = 0.0f;
+
+            for (int b = 0; b < 40; ++b)
+            {
+                buffer.clear();
+                proc.processBlock (buffer, midi);
+                midi.clear();
+
+                const float* x = buffer.getReadPointer (0);
+                for (int n = 0; n < block; ++n)
+                {
+                    const double d = (double) x[n] - (double) previous;
+                    diff   += d * d;
+                    energy += (double) x[n] * (double) x[n];
+                    previous = x[n];
+                    stats.peak = juce::jmax (stats.peak, (double) std::abs (x[n]));
+                }
+            }
+
+            stats.brightness = energy > 1.0e-12 ? diff / energy : 0.0;
+            return stats;
+        };
+
+        const auto open = renderFiltered (0, 8000.0f);   // Off
+        const auto dark = renderFiltered (1, 300.0f);    // LP, low cutoff
+
+        const bool audible  = open.peak > 0.01 && dark.peak > 0.001;
+        const bool darker   = dark.brightness < open.brightness * 0.5;
+        const bool finite   = std::isfinite (dark.brightness) && std::isfinite (dark.peak);
+
+        std::cout << "filter routing: openBright=" << open.brightness
+                  << " darkBright=" << dark.brightness
+                  << " openPeak=" << open.peak
+                  << " darkPeak=" << dark.peak << std::endl;
+
+        if (! (audible && darker && finite))
+        {
+            ++failures;
+            std::cout << "FAIL: per-voice filter does not affect the output" << std::endl;
+        }
+    }
+
+    // --- (1g5) filter controls and their place in the layout ------------------
+    // The UI order follows the signal: VOICE, SECOND VOICE, FILTER, OUTPUT.
+    // KEY and VELO have to exist as knobs, and RANDOM must keep them in range.
+    {
+        VesperaAudioProcessor proc;
+        proc.setPlayConfigDetails (0, 2, 48000.0, 512);
+
+        std::unique_ptr<juce::AudioProcessorEditor> editor (proc.createEditor());
+        editor->setSize (editor->getWidth(), editor->getHeight());
+        editor->resized();
+
+        juce::Slider* levelKnob = nullptr;
+        juce::Slider* cutoffKnob = nullptr;
+        juce::Slider* keyKnob = nullptr;
+        juce::Slider* velKnob = nullptr;
+
+        std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
+        {
+            for (auto* child : c.getChildren())
+            {
+                if (auto* s = dynamic_cast<juce::Slider*> (child))
+                {
+                    const auto tip = s->getTooltip();
+
+                    if (tip.startsWith ("LEVEL - velocity of the second voice"))
+                        levelKnob = s;
+                    if (tip.startsWith ("CUTOFF - filter frequency"))
+                        cutoffKnob = s;
+                    if (tip.startsWith ("KEY - key tracking"))
+                        keyKnob = s;
+                    if (tip.startsWith ("VELO - velocity into cutoff"))
+                        velKnob = s;
+                }
+
+                walk (*child);
+            }
+        };
+        walk (*editor);
+
+        const bool found = levelKnob != nullptr && cutoffKnob != nullptr
+                        && keyKnob != nullptr && velKnob != nullptr;
+
+        const bool ordered = found
+                          && levelKnob->isVisible() && cutoffKnob->isVisible()
+                          && keyKnob->isVisible() && velKnob->isVisible()
+                          && levelKnob->getBounds().getX() < cutoffKnob->getBounds().getX()
+                          && keyKnob->getBounds().getWidth() > 10
+                          && velKnob->getBounds().getWidth() > 10;
+
+        proc.randomizeParameters();
+
+        const float key = getParam (proc, "filterKey");
+        const float vel = getParam (proc, "filterVel");
+
+        const bool randomised = key >= 0.2f && key <= 0.9f
+                             && vel >= 0.2f && vel <= 0.7f;
+
+        std::cout << "filter ui: found=" << found
+                  << " ordered=" << ordered
+                  << " randomKey=" << key
+                  << " randomVel=" << vel << std::endl;
+
+        if (! (found && ordered && randomised))
+        {
+            ++failures;
+            std::cout << "FAIL: filter controls are missing, misordered or out of range"
+                      << std::endl;
+        }
+    }
+
     // --- (1h) chords ---------------------------------------------------------
+
     {
         struct ChordRender
         {

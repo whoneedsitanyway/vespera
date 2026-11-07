@@ -10,7 +10,6 @@
 #include "dsp/NotePool.h"
 #include "dsp/PatternEngine.h"
 #include "dsp/PolySynth.h"
-#include "dsp/ResonantFilter.h"
 #include "dsp/Tape.h"
 #include "dsp/SecondVoice.h"
 #include "dsp/Lfo.h"
@@ -55,6 +54,8 @@ namespace vespera
         static constexpr const char* filterCutoff = "filterCutoff";
         static constexpr const char* filterReso   = "filterReso";
         static constexpr const char* filterEnv    = "filterEnv";
+        static constexpr const char* filterKey    = "filterKey";
+        static constexpr const char* filterVel    = "filterVel";
         static constexpr const char* lfoRate      = "lfoRate";
         static constexpr const char* lfoRateHz    = "lfoRateHz";
         static constexpr const char* lfoSync      = "lfoSync";
@@ -214,6 +215,8 @@ private:
         std::atomic<float>* filterCutoff = nullptr;
         std::atomic<float>* filterReso   = nullptr;
         std::atomic<float>* filterEnv    = nullptr;
+        std::atomic<float>* filterKey    = nullptr;
+        std::atomic<float>* filterVel    = nullptr;
         std::atomic<float>* lfoRate      = nullptr;
         std::atomic<float>* lfoRateHz    = nullptr;
         std::atomic<float>* lfoSync      = nullptr;
@@ -255,7 +258,6 @@ private:
     vespera::PatternEngine pattern;
     vespera::PatternEngine secondPattern;
     vespera::PolySynth     synth;
-    vespera::ResonantFilter filter;
     vespera::Tape          tape;
     vespera::Lfo            lfo;
     vespera::Limiter        outputLimiter;

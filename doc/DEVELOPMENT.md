@@ -75,16 +75,16 @@ Source/
   PluginProcessor.h/.cpp      процессор: параметры, секвенция, цепь, randomize, MIDI-экспорт
   PluginEditor.h/.cpp         UI: секции, раскладка, привязки, тема, COMPACT, MIDI-drag
   PresetManager.h             файловые пресеты (save/load XML-состояния APVTS)
-  FactoryPresets.h            вшитые заводские пресеты (XML-строки, версия 8)
+  FactoryPresets.h            вшитые заводские пресеты (XML-строки, версия 11)
   DebugLogger.h/.cpp          «чёрный ящик»: снапшоты уровней, аномалии, лог-файл
   dsp/
     Scale.h                   лады, квантование, транспозиция по ступеням
     Chord.h                   диатонические аккорды из ступеней лада
     NotePool.h                пул последних нот + Latch
     PatternEngine.h           генератор паттернов (контуры, density, mutate, chord mask)
-    PolySynth.h               полисинтез (24 голоса, 2 осциллятора, PolyBLEP, ADSR)
-    ResonantFilter.h          TPT state-variable фильтр (LP/BP/HP) + env follower
-    Lfo.h                   источник модуляции (7 форм, free/sync)
+    PolySynth.h               полисинтез (24 голоса, 2 осциллятора, PolyBLEP, ADSR, VoiceFilter)
+    VoiceFilter.h             per-voice TPT SVF (LP/BP/HP): огибающая ноты, key track, velocity, LFO
+    Lfo.h                     источник модуляции (7 форм, free/sync)
     Tape.h                    один макрос: tone / saturation / wow / gated hiss
     SecondVoice.h             Answer / Bass / Harmony / Octave / Drone
     Limiter.h                 выходной пиковый лимитер (вкл/выкл, мягкий потолок)
@@ -92,7 +92,7 @@ Source/
     VesperaLookAndFeel.h/.cpp LookAndFeel, темы, IconButton
     PatternDisplay.h/.cpp     визуализация пула, шагов и playhead
 Tests/
-  GeneratorTest.cpp           офлайн-тесты стройблоков (лады, пул, паттерн, tape, второй голос, LFO, лимитер, rate)
+  GeneratorTest.cpp           офлайн-тесты стройблоков (лады, пул, паттерн, tape, второй голос, LFO, лимитер, per-voice фильтр, rate)
   SynthTest.cpp               голоса: звук/релиз, конечность, voice stealing
   PluginTest.cpp              реальный процессор + редактор: генерация, пресеты,
                               состояние, MIDI-экспорт, Play Sync, UI-блокировки
@@ -128,7 +128,9 @@ done
   нотами, на малом значении слышен но мягок, на нуле прозрачен, на максимуме
   ограничен); второй голос (октава, бас, ответ, все роли в ладу, density = 0
   выключает); LFO в диапазоне и
-  varies; лимитер держит горячий вход и не трогает тихий; таблица `rate`
+  varies; лимитер держит горячий вход и не трогает тихий; per-voice фильтр
+  (Off прозрачен, огибающая открывает и закрывает срез внутри ноты, velocity и
+  key tracking меняют яркость, крайние режимы конечны); таблица `rate`
   согласована с именами.
 - `VesperaSynthTest` — ноты звучат и уходят в тишину; экстремальные настройки
   конечны и ограничены; voice stealing не превышает 24 голоса.
@@ -138,6 +140,8 @@ done
   засевает пул из нового лада, varied), плотный рендер не клипит,
   `keyLock`, **экспорт MIDI** (запись → чтение → note-on), второй голос в
   синтезе, MIDI-экспорте и в снапшоте при остановленном транспорте,
+  per-voice фильтр влияет на выход, ручки KEY/VELO на месте и порядок секций
+  VOICE → SECOND VOICE → FILTER → OUTPUT,
   заводские пресеты
   (список/установка/загрузка/фолбэк/дефолт), round-trip состояния, поведение
   редактора (дефолтный пресет, переоткрытие окна, восстановленный проект,

@@ -145,7 +145,12 @@ VesperaAudioProcessorEditor::VesperaAudioProcessorEditor (VesperaAudioProcessor&
              "RATE - LFO speed in Hz (used when Sync is off)");
     addKnob (cutoff,     ids::filterCutoff, "CUTOFF", "CUTOFF - filter frequency");
     addKnob (filterReso, ids::filterReso,   "RESO",   "RESO - filter resonance");
-    addKnob (filterEnv,  ids::filterEnv,    "ENV",    "ENV - envelope follower amount into the filter");
+    addKnob (filterEnv,  ids::filterEnv,    "ENV",
+             "ENV - how far each note's own envelope opens the filter (up to 3 octaves)");
+    addKnob (filterKey,  ids::filterKey,    "KEY",
+             "KEY - key tracking: higher notes open the filter, so the line stays even");
+    addKnob (filterVel,  ids::filterVel,    "VELO",
+             "VELO - velocity into cutoff: hard notes are brighter, soft notes darker");
     addKnob (motion,     ids::motion,       "MOTION", "MOTION - LFO depth into the filter");
 
     lfoSyncButton.setTooltip ("SYNC - lock the LFO to the host tempo (disables RATE)");
@@ -418,7 +423,8 @@ void VesperaAudioProcessorEditor::refreshThemedColours()
     for (auto* k : { &poolSize, &steps, &density, &octaves, &mutate, &swing, &gate, &accent,
                      &transpose,
                      &attack, &decay, &sustain, &release, &detune, &tape,
-                     &cutoff, &filterReso, &filterEnv, &motion, &lfoRateHz,
+                     &cutoff, &filterReso, &filterEnv, &filterKey, &filterVel,
+                     &motion, &lfoRateHz,
                      &secondOctave, &secondOffset, &secondDensity, &secondLevel,
                      &output })
         k->label.setColour (juce::Label::textColourId, text);
@@ -581,10 +587,10 @@ void VesperaAudioProcessorEditor::paint (juce::Graphics& g)
                        findColour (VesperaLookAndFeel::accentColourId));
     paintSectionLabel (g, voiceArea,   "VOICE",
                        findColour (VesperaLookAndFeel::coolColourId));
-    paintSectionLabel (g, filterArea,  "FILTER",
-                       findColour (VesperaLookAndFeel::accentColourId));
     paintSectionLabel (g, secondArea,  "SECOND VOICE",
                        findColour (VesperaLookAndFeel::hotColourId));
+    paintSectionLabel (g, filterArea,  "FILTER",
+                       findColour (VesperaLookAndFeel::accentColourId));
     paintSectionLabel (g, outArea,     "OUTPUT",
                        findColour (VesperaLookAndFeel::accentDimColourId));
 }
@@ -639,9 +645,11 @@ void VesperaAudioProcessorEditor::resized()
     inner.removeFromLeft (gap);
     voiceArea = inner.removeFromLeft (colW);
     inner.removeFromLeft (gap);
-    filterArea = inner.removeFromLeft (colW);
-    inner.removeFromLeft (gap);
+    // Signal order, left to right: one voice, then the duet that plays with it,
+    // then the filter both of them run through, then the mixer.
     secondArea = inner.removeFromLeft (colW);
+    inner.removeFromLeft (gap);
+    filterArea = inner.removeFromLeft (colW);
     inner.removeFromLeft (gap);
     outArea = inner;
 
@@ -717,6 +725,16 @@ void VesperaAudioProcessorEditor::resized()
         placeGrid ({ &attack, &decay, &sustain, &release, &detune, &tape }, col, 2);
     }
 
+    // SECOND VOICE
+    {
+        auto col = secondArea.reduced (10, 8);
+        col.removeFromTop (20);
+        placeCombo (secondRoleCombo, col);
+        placeCombo (secondIntervalCombo, col);
+        col.removeFromTop (2);
+        placeGrid ({ &secondOctave, &secondOffset, &secondDensity, &secondLevel }, col, 2);
+    }
+
     // FILTER
     {
         auto col = filterArea.reduced (10, 8);
@@ -739,17 +757,8 @@ void VesperaAudioProcessorEditor::resized()
         filterRateCombo.box.setBounds (syncRow);
 
         col.removeFromTop (6);
-        placeGrid ({ &cutoff, &filterReso, &filterEnv, &motion }, col, 2);
-    }
-
-    // SECOND VOICE
-    {
-        auto col = secondArea.reduced (10, 8);
-        col.removeFromTop (20);
-        placeCombo (secondRoleCombo, col);
-        placeCombo (secondIntervalCombo, col);
-        col.removeFromTop (2);
-        placeGrid ({ &secondOctave, &secondOffset, &secondDensity, &secondLevel }, col, 2);
+        placeGrid ({ &cutoff, &filterReso, &filterEnv, &motion,
+                     &filterKey, &filterVel }, col, 2);
     }
 
     // OUTPUT

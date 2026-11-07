@@ -8,12 +8,13 @@ Vespera — это **генератор мелодий + синтезатор**.
 паттерн, а полисинтез его воспроизводит.
 
 ```
-MIDI In ─┬─ Scale.quantize ── NotePool ── PatternEngine ── PolySynth ── ResonantFilter ── Tape ── Output ── Limiter ── Safety ── Out
-         │   (в лад)          (последние   (контур,        (2 осцилля-  (TPT SVF,        (один     (гейн,   (вкл/     (±1.0,
-         │                    N нот)        плотность,      тора, ADSR,  огибающая       макрос:   сглажен- выкл)     кламп)
-         │                                mutate, swing,    PolyBLEP,    + LFO,          нагрев,   ный)
-         │                                gate, accent,     панорама)    motion)         wow, хисс)
-         │                                transpose)
+MIDI In ─┬─ Scale.quantize ── NotePool ── PatternEngine ── PolySynth ── Tape ── Output ── Limiter ── Safety ── Out
+         │   (в лад)          (последние   (контур,        (2 осцилля-  (один     (гейн,   (вкл/     (±1.0,
+         │                    N нот)        плотность,      тора, ADSR,  макрос:   сглажен- выкл)     кламп)
+         │                                mutate, swing,    PolyBLEP,    нагрев,   ный)
+         │                                gate, accent,     панорама,    wow, хисс)
+         │                                transpose)        VoiceFilter
+         │                                                  на голос)
          │
          └─ MONITOR ────────────────────────┘
             (параллельно играет сыгранные ноты)
@@ -126,6 +127,8 @@ NotePool (16 слотов, FIFO) ── PatternEngine (до 16 шагов) ─�
   Для Saw и Square — **PolyBLEP** (сглаживание разрывов, антиалиасинг).
 - Детюн между осцилляторами (0..1 → 0..22 центов).
 - Стандартная ADSR-огибающая (attack, decay, sustain, release).
+- **Свой фильтр на каждый голос** (`VoiceFilter`, см. ниже): нота фильтруется
+  до панорамирования, поэтому резонансный пик принадлежит ноте, а не миксу.
 - Панорама зависит от ноты: `(note % 12) / 11 − 0.5`, ограничена ±0.7,
   cos/sin law (равномощное панорамирование).
 - `noteOnTimed(note, vel, durationSamples)` — для секвенции:
@@ -134,24 +137,36 @@ NotePool (16 слотов, FIFO) ── PatternEngine (до 16 шагов) ─�
 - Voice stealing: при переполнении вытесняется самый старый голос.
 - `setParams()` вызывается каждый блок, но пересчитывает ADSR только
   при реальном изменении параметров (сравнение с `1e-7f`).
+- `setFilterParams()` раздаёт настройки фильтра всем голосам; новый или
+  украденный голос получает их в `startVoice()` перед первым сэмплом.
 
-### `ResonantFilter.h`
-Резонансный мультимод-фильтр (TPT state-variable, Zavalishin).
+### `VoiceFilter.h`
+Резонансный мультимод-фильтр **внутри голоса** (TPT state-variable, Zavalishin).
 - Режимы: Off, LP, BP, HP (2-й порядок, 12 дБ/окт).
 - Q от 0.707 (Баттерворт) до ~16 (резонанс) — квадратичная зависимость от ручки.
-- **Env follower** (пиковый детектор, атака 2 мс, релиз 180 мс)
-  модулирует срез вверх (`filterEnv` × 3 октавы).
-- **LFO** модулирует срез (`motion` × 2 октавы).
+- **Своя ADSR-огибающая на срез** у каждой ноты: атака/спад/сустейн/релиз
+  перезапускаются на `noteOn`, поэтому каждая нота открывает и закрывает
+  фильтр сама. Глубина — `filterEnv` × 3 октавы.
+- **Key tracking** (`filterKey`): срез следует за высотой ноты
+  (`keyTrack × (note − 60)/12` октав), линия остаётся ровной по яркости.
+- **Velocity** (`filterVel`): жёсткие ноты ярче, мягкие темнее
+  (`velAmount × (velocity − 0.6) × 2` октавы).
+- **LFO** остаётся глобальным (`motion` × 2.5 октавы) и добавляется к срезу;
+  продвигается на чанк ≤ 64 сэмпла, чтобы быстрые свипы не «ступали».
 - Мягкий клип на выходе (±1.2 → tanh) — экстремальный резонанс не разгоняется.
 - Коэффициенты пересчитываются каждые 16 сэмплов (экономия tan() на блок).
+- При `type = Off` фильтр **bit-transparent** (выход = вход), но огибающая
+  продолжает идти, чтобы включение фильтра не началось со старого значения.
 
 ### `Lfo.h`
 Источник модуляции фильтра.
 - 7 форм: Sine, Triangle, Saw Up, Saw Down, Square, Random, Walk.
 - Random: новое значение на каждом цикле (phase wrap).
-- Walk: случайное блуждание (сглаживание ×0.25 к новой цели).
-- Фаза продвигается один раз за блок (`advance(cycles, shape, rng)`).
-- Частота: свободная (Hz, 0.02..20) или синхронная (деления 4/1..1/32 от BPM).
+- Walk: случайное блуждание к новой цели; сглаживание привязано ко времени,
+  поэтому не зависит от размера чанка.
+- Фаза продвигается один раз за чанк (≤ 64 сэмпла), а не за блок:
+  `advance(cycles, shape, rng)`.
+- Частота: свободная (Hz, 0.05..10) или синхронная (деления 4/1..1/32 от BPM).
 
 ### `Tape.h`
 Один музыкальный макрос «магнитной ленты» (заменил шесть ручек Character).
@@ -210,8 +225,8 @@ NotePool (16 слотов, FIFO) ── PatternEngine (до 16 шагов) ─�
 - **MIDI-экспорт** (`writePatternMidiFile`): текущий паттерн → Standard MIDI File
   (480 тиков, темп, swing, gate, end of track). Второй голос пишется отдельной
   дорожкой, поэтому клип открывается как 1 или 2 трека.
-- **Порядок выходного каскада**: synth → filter → tape → output gain (smoothed 20 мс)
-  → limiter → safety clamp (±1.0) → host buffer.
+- **Порядок выходного каскада**: synth (с per-voice фильтром) → tape → output gain
+  (smoothed 20 мс) → limiter → safety clamp (±1.0) → host buffer.
 - **Второй голос**: `triggerStep()` после лида вызывает `secondVoiceAt()` и
   запускает ещё одну ноту через тот же `PolySynth` (роль, регистр, плотность).
   `Answer` читает отдельный `secondPattern`, остальные роли выводятся из шага лида.
@@ -219,7 +234,7 @@ NotePool (16 слотов, FIFO) ── PatternEngine (до 16 шагов) ─�
   Role/Offset/Interval/Register/Density/Level, поэтому дисплей живой и при
   остановленном транспорте.
 - **Финальный предохранитель**: нефинитные → 0, конечные выбросы → кламп ±1.0;
-  при разгоне (tapePeak > 32) — сброс synth/filter/tape.
+  при разгоне (tapePeak > 32) — сброс synth/tape.
 - **Чёрный ящик (DebugLogger)**: аудио-поток кладёт в lock-free FIFO снапшот
   блока (пики по каждому каскаду, все параметры, флаги), фоновый поток пишет
   heartbeat раз в 2 с и, при срабатывании флага аномалии, выгружает историю
@@ -246,12 +261,13 @@ NotePool (16 слотов, FIFO) ── PatternEngine (до 16 шагов) ─�
   APVTS. Каталог — `~/Library/Application Support/Vespera/Presets` (в тестах
   подменяется на временный).
   - **Заводские пресеты** вшиты в бинарь (`Source/FactoryPresets.h`),
-    версия `kFactoryPresetVersion = 7` — при обновлении переустанавливаются.
+    версия `kFactoryPresetVersion = 11` — при обновлении переустанавливаются.
   - Дефолтный пресет — **`First Light`**.
 - `PluginEditor` — корпус:
   - хедер: слева — окошко пресетов + иконки Save / темы / LOG;
     справа — RANDOM / COMPACT / MIDI (drag-кнопка экспорта).
-  - секции: NOTES / PATTERN / VOICE / FILTER / SECOND VOICE / OUTPUT.
+  - секции слева направо по сигналу: NOTES / PATTERN / VOICE / SECOND VOICE /
+    FILTER / OUTPUT.
   - внизу: `PatternDisplay` — визуализация пула, шагов и playhead.
   - **COMPACT** скрывает дисплей и уменьшает окно (1280×820 → 1280×600).
   - **LFO Sync** приглушает и отключает ручку RATE (как SYNC/TIME в Lunara).
@@ -281,10 +297,12 @@ NotePool (16 слотов, FIFO) ── PatternEngine (до 16 шагов) ─�
 4. Если Key/Scale изменились — реквантовать пул, пересобрать паттерн.
 5. Применить посев от RANDOM (`applyPendingSeed`).
 6. Обработать MIDI-вход: квантовать → NotePool; при Monitor — запустить голос.
-7. Цикл рендера: на границе шага — `triggerStep()` (активные шаги →
-   `synth.noteOnTimed`; при **Chords** — `buildChord()` и до 4 голосов),
-   рендер `PolySynth` в `outBuffer`.
-8. `ResonantFilter` (режим, cutoff, reso, env follower, LFO motion).
+7. Цикл рендера (чанки ≤ 64 сэмпла): на границе шага — `triggerStep()`
+   (активные шаги → `synth.noteOnTimed`; при **Chords** — `buildChord()`
+   и до 4 голосов); LFO продвигается на чанк, `synth.setFilterParams()`
+   получает свежий `lfoOctaves`; рендер `PolySynth` в `outBuffer`.
+8. `VoiceFilter` работает **внутри** каждого голоса: cutoff, резонанс,
+   огибающая ноты, key tracking, velocity и LFO motion.
 9. `Tape` (один макрос: tone, saturation, wow, gated hiss).
 10. Output gain (сглаженный).
 11. `Limiter` → если галочка включена (иначе пропускается).

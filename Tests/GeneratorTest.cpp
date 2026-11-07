@@ -16,6 +16,7 @@
 #include "../Source/dsp/SecondVoice.h"
 #include "../Source/dsp/Lfo.h"
 #include "../Source/dsp/Limiter.h"
+#include "../Source/dsp/VoiceFilter.h"
 
 int main()
 {
@@ -1170,6 +1171,151 @@ int main()
         {
             ++failures;
             std::cout << "FAIL: a leap is not answered by a step back" << std::endl;
+        }
+    }
+
+    // --- (15) per-voice filter -----------------------------------------------
+    {
+        // Every note owns its filter now, so the three musical controls have to
+        // be audible on a single note: the cutoff envelope has to open and close
+        // within the note, hard velocities have to be brighter, and high notes
+        // have to be brighter than low ones at the same cutoff.
+        const double sr = 48000.0;
+        const int total = (int) (sr * 0.5);
+
+        std::vector<float> input ((size_t) total);
+        {
+            juce::Random rng (4242);
+            for (auto& s : input)
+                s = 0.35f * (rng.nextFloat() * 2.0f - 1.0f);
+        }
+
+        // High-frequency energy relative to the total energy: independent of how
+        // loud the filter output happens to be, so two velocities compare fairly.
+        auto brightness = [] (const std::vector<float>& y, int from, int to)
+        {
+            double diff = 0.0, energy = 0.0;
+
+            for (int i = juce::jmax (1, from); i < to; ++i)
+            {
+                const double d = (double) y[(size_t) i] - (double) y[(size_t) i - 1];
+                diff   += d * d;
+                energy += (double) y[(size_t) i] * (double) y[(size_t) i];
+            }
+
+            return energy > 1.0e-12 ? diff / energy : 0.0;
+        };
+
+        auto render = [] (vespera::VoiceFilterParams p, int note, float vel,
+                          const std::vector<float>& in)
+        {
+            vespera::VoiceFilter f;
+            f.prepare (48000.0);
+            f.setParams (p);
+            f.noteOn (note, vel);
+
+            std::vector<float> out (in.size());
+            for (size_t i = 0; i < in.size(); ++i)
+                out[i] = f.process (in[i]);
+
+            return out;
+        };
+
+        // Off must be bit-transparent, otherwise the plugin colours the signal
+        // even when the user turned the filter off.
+        vespera::VoiceFilterParams offParams;
+        offParams.type = 0;
+        const auto offOut = render (offParams, 60, 0.8f, input);
+
+        bool transparent = true;
+        for (size_t i = 0; i < input.size(); ++i)
+            if (offOut[i] != input[i])
+                transparent = false;
+
+        // Envelope: cutoff 800 Hz + 0.8 * 3 octaves at the attack, back to the
+        // base cutoff once the short decay is over.
+        vespera::VoiceFilterParams envParams;
+        envParams.type = 1;
+        envParams.cutoffHz = 800.0f;
+        envParams.resonance = 0.0f;
+        envParams.envAmount = 0.8f;
+        envParams.keyTrack = 0.0f;
+        envParams.velAmount = 0.0f;
+        envParams.attack = 0.004f;
+        envParams.decay = 0.5f;
+        envParams.sustain = 0.0f;
+
+        const auto envOut = render (envParams, 60, 0.8f, input);
+        const double headBright = brightness (envOut, 0, (int) (sr * 0.05));
+        const double tailBright = brightness (envOut, (int) (sr * 0.35), (int) (sr * 0.45));
+
+        // Velocity: same note, same cutoff, only the playing strength differs.
+        vespera::VoiceFilterParams velParams;
+        velParams.type = 1;
+        velParams.cutoffHz = 1000.0f;
+        velParams.resonance = 0.0f;
+        velParams.envAmount = 0.0f;
+        velParams.keyTrack = 0.0f;
+        velParams.velAmount = 1.0f;
+        velParams.attack = 0.001f;
+        velParams.decay = 0.01f;
+        velParams.sustain = 1.0f;
+
+        const auto hardOut = render (velParams, 60, 1.0f, input);
+        const auto softOut = render (velParams, 60, 0.2f, input);
+        const double hardBright = brightness (hardOut, 2400, 12000);
+        const double softBright = brightness (softOut, 2400, 12000);
+
+        // Key tracking: the same note, with and without the cutoff following it.
+        vespera::VoiceFilterParams keyParams = velParams;
+        keyParams.velAmount = 0.0f;
+        keyParams.keyTrack = 1.0f;
+
+        const auto trackedOut = render (keyParams, 84, 0.8f, input);
+        keyParams.keyTrack = 0.0f;
+        const auto flatOut = render (keyParams, 84, 0.8f, input);
+        const double trackedBright = brightness (trackedOut, 2400, 12000);
+        const double flatBright = brightness (flatOut, 2400, 12000);
+
+        // Band-pass, high-pass and maximum resonance must stay finite.
+        bool finite = true;
+        float maxAbs = 0.0f;
+
+        for (int type : { 1, 2, 3 })
+        {
+            vespera::VoiceFilterParams p = keyParams;
+            p.type = type;
+            p.resonance = 1.0f;
+            p.cutoffHz = 2000.0f;
+            p.keyTrack = 0.0f;
+
+            const auto out = render (p, 60, 1.0f, input);
+            for (float s : out)
+            {
+                if (! std::isfinite (s))
+                    finite = false;
+                maxAbs = juce::jmax (maxAbs, std::abs (s));
+            }
+        }
+
+        const bool envOpens   = headBright > tailBright * 2.0;
+        const bool velWorks   = hardBright > softBright * 1.5;
+        const bool keyWorks   = trackedBright > flatBright * 2.0;
+        const bool stable     = finite && maxAbs < 3.0f;
+
+        std::cout << "filter: transparent=" << transparent
+                  << " head=" << headBright
+                  << " tail=" << tailBright
+                  << " hard=" << hardBright
+                  << " soft=" << softBright
+                  << " tracked=" << trackedBright
+                  << " flat=" << flatBright
+                  << " maxAbs=" << maxAbs << std::endl;
+
+        if (! (transparent && envOpens && velWorks && keyWorks && stable))
+        {
+            ++failures;
+            std::cout << "FAIL: per-voice filter does not articulate" << std::endl;
         }
     }
 

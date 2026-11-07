@@ -68,6 +68,8 @@ void VesperaAudioProcessor::bindRawParams()
     rawParams.filterCutoff = bind (ids::filterCutoff);
     rawParams.filterReso   = bind (ids::filterReso);
     rawParams.filterEnv    = bind (ids::filterEnv);
+    rawParams.filterKey    = bind (ids::filterKey);
+    rawParams.filterVel    = bind (ids::filterVel);
     rawParams.lfoRate      = bind (ids::lfoRate);
     rawParams.lfoRateHz    = bind (ids::lfoRateHz);
     rawParams.lfoSync      = bind (ids::lfoSync);
@@ -185,13 +187,15 @@ APVTS::ParameterLayout VesperaAudioProcessor::createParameterLayout()
     addChoice (ids::filterType,   "Filter", { "Off", "LP", "BP", "HP" }, 1);
     addFloat  (ids::filterCutoff, "Cutoff", 30.0f, 18000.0f, 8000.0f, "Hz", 0, 1200.0f);
     addFloat  (ids::filterReso,   "Reso",   0.0f, 1.0f, 0.15f, "", 2);
-    addFloat  (ids::filterEnv,    "Env",    0.0f, 1.0f, 0.2f, "", 2);
+    addFloat  (ids::filterEnv,    "Env",    0.0f, 1.0f, 0.35f, "", 2);
+    addFloat  (ids::filterKey,    "Key",    0.0f, 1.0f, 0.50f, "", 2);
+    addFloat  (ids::filterVel,    "Velo",   0.0f, 1.0f, 0.40f, "", 2);
     addChoice (ids::lfoShape,     "LFO Shape", Lfo::getNames(), 0);
     addBool   (ids::lfoSync,      "LFO Sync",  false);
     addChoice (ids::lfoRate,      "Division",  { "4/1", "2/1", "1/1", "1/2",
                                                  "1/4", "1/8", "1/16", "1/32" }, 2);
-    addFloat  (ids::lfoRateHz,    "Rate", 0.02f, 20.0f, 1.0f, "Hz", 2, 1.0f);
-    addFloat  (ids::motion,       "Motion", 0.0f, 1.0f, 0.1f, "", 2);
+    addFloat  (ids::lfoRateHz,    "Rate", 0.05f, 10.0f, 1.0f, "Hz", 2, 1.0f);
+    addFloat  (ids::motion,       "Motion", 0.0f, 1.0f, 0.35f, "", 2);
 
     // --- Second voice --------------------------------------------------------
     addChoice (ids::secondRole,     "Role", getSecondRoleNames(), kSecondOff);
@@ -241,7 +245,6 @@ void VesperaAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     setLatencySamples (0);
 
     synth.prepare (sampleRate);
-    filter.prepare (sampleRate);
     tape.prepare (sampleRate);
     outputLimiter.prepare (sampleRate);
 
@@ -698,6 +701,10 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         currentStep = 0;
         samplesToNextStep = 0.0;
 
+        // Every take starts with the modulation in the same place, so a sweep
+        // never begins halfway through its cycle.
+        lfo.reset();
+
         // Publish the new state so the display can show "waiting for transport".
         int notes[NotePool::kMaxNotes] {};
         const int n = notePool.getSorted (notes, (int) rp.poolSize->load());
@@ -852,12 +859,44 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     const float gate = rp.gate->load();
     const float swing = rp.swing->load();
 
+    // --- filter + LFO --------------------------------------------------------
+    // The resonant filter lives inside the voices (VoiceFilter.h): every note
+    // opens its own cutoff envelope, and the brightness follows the pitch and
+    // the velocity of that note.  Only the LFO is global, so it is advanced here
+    // and handed to the voices in octaves.
+    const bool lfoSynced = rp.lfoSync->load() > 0.5f;
+    double lfoHz = (double) rp.lfoRateHz->load();
+
+    if (lfoSynced)
+    {
+        const double lfoBeats = lfoRateInBeats ((int) rp.lfoRate->load());
+        lfoHz = 1.0 / (lfoBeats * 60.0 / currentBpm);
+    }
+
+    lfoHz = juce::jlimit (0.01, 40.0, lfoHz);
+
+    const int lfoShape = (int) rp.lfoShape->load();
+    const float motion = rp.motion->load() * 2.5f;
+
+    VoiceFilterParams vf;
+    vf.type      = (int) rp.filterType->load();
+    vf.cutoffHz  = rp.filterCutoff->load();
+    vf.resonance = rp.filterReso->load();
+    vf.envAmount = rp.filterEnv->load();
+    vf.keyTrack  = rp.filterKey->load();
+    vf.velAmount = rp.filterVel->load();
+
     int pos = 0;
 
     if (! sequencerRunning)
     {
         // Transport is stopped: keep rendering so MONITOR notes and release
         // tails still sound, but never advance the pattern.
+        const float lfoValue = lfo.advance (lfoHz * (double) numSamples / currentSampleRate,
+                                            lfoShape, rng);
+        vf.lfoOctaves = motion * lfoValue;
+        synth.setFilterParams (vf);
+
         synth.render (outBuffer.getWritePointer (0),
                       outBuffer.getWritePointer (1), numSamples);
         pos = numSamples;
@@ -874,6 +913,16 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
             chunk = juce::jmin (chunk, untilStep);
         chunk = juce::jmax (1, chunk);
 
+        // The LFO is advanced per chunk (at most 64 samples below) instead of
+        // once per block: a 10 Hz sweep on a 512-sample block would otherwise
+        // become five audible steps.
+        chunk = juce::jmin (chunk, 64);
+
+        const float lfoValue = lfo.advance (lfoHz * (double) chunk / currentSampleRate,
+                                            lfoShape, rng);
+        vf.lfoOctaves = motion * lfoValue;
+        synth.setFilterParams (vf);
+
         synth.render (outBuffer.getWritePointer (0) + pos,
                       outBuffer.getWritePointer (1) + pos, chunk);
 
@@ -885,28 +934,6 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     displayVoices.store (activeVoices, std::memory_order_relaxed);
 
     const float synthPeak = peakMagnitude (outBuffer, numSamples);
-
-    // --- resonant filter -----------------------------------------------------
-    // The LFO can run free (Hz) or locked to the host tempo (1/1 .. 1/32), and
-    // its shape can be a sine, a ramp, a square or a random source.
-    const bool lfoSynced = rp.lfoSync->load() > 0.5f;
-    double lfoHz = (double) rp.lfoRateHz->load();
-
-    if (lfoSynced)
-    {
-        const double lfoBeats = lfoRateInBeats ((int) rp.lfoRate->load());
-        lfoHz = 1.0 / (lfoBeats * 60.0 / currentBpm);
-    }
-
-    lfoHz = juce::jlimit (0.01, 40.0, lfoHz);
-
-    const float lfoValue = lfo.advance (lfoHz * (double) numSamples / currentSampleRate,
-                                        (int) rp.lfoShape->load(), rng);
-    const float lfoOctaves = rp.motion->load() * 2.0f * lfoValue;
-
-    filter.process (outBuffer.getWritePointer (0), outBuffer.getWritePointer (1),
-                    numSamples, (int) rp.filterType->load(), rp.filterCutoff->load(),
-                    rp.filterReso->load(), rp.filterEnv->load(), lfoOctaves);
 
     // --- tape (voice material) ----------------------------------------------
     TapeParams tp;
@@ -1015,6 +1042,8 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         snap.filterCutoff = rp.filterCutoff->load();
         snap.filterReso = rp.filterReso->load();
         snap.filterEnv = rp.filterEnv->load();
+        snap.filterKey = rp.filterKey->load();
+        snap.filterVel = rp.filterVel->load();
         snap.lfoRate = (float) lfoHz;
         snap.lfoShape = (int) rp.lfoShape->load();
         snap.lfoSynced = lfoSynced;
@@ -1057,7 +1086,6 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     {
         outBuffer.clear();
         synth.reset();
-        filter.reset();
         tape.reset();
     }
 
@@ -1151,15 +1179,15 @@ void VesperaAudioProcessor::randomizeParameters()
                                             : 0;       // Off
 
     float cutoffLo = 2000.0f, cutoffHi = 12000.0f;
-    float maxReso = 0.45f, maxEnv = 0.5f, maxMotion = 0.4f;
+    float maxReso = 0.45f, maxEnv = 0.6f, maxMotion = 0.55f;
 
     switch (filterType)
     {
         case 1:  cutoffLo = 700.0f;  cutoffHi = 8000.0f; break;   // LP
         case 2:  cutoffLo = 300.0f;  cutoffHi = 1500.0f;          // BP: around the
-                 maxReso = 0.30f; maxEnv = 0.35f; maxMotion = 0.25f; break;  // notes
+                 maxReso = 0.30f; maxEnv = 0.40f; maxMotion = 0.35f; break;  // notes
         case 3:  cutoffLo = 50.0f;   cutoffHi = 220.0f;           // HP: low cut
-                 maxReso = 0.25f; maxEnv = 0.25f; maxMotion = 0.2f; break;
+                 maxReso = 0.25f; maxEnv = 0.30f; maxMotion = 0.30f; break;
         default: break;                                           // Off
     }
 
@@ -1182,11 +1210,17 @@ void VesperaAudioProcessor::randomizeParameters()
     setReal (ids::filterCutoff, cutoff);
     setReal (ids::filterReso,   random.nextFloat() * maxReso);
     setReal (ids::filterEnv,    random.nextFloat() * maxEnv);
+    setReal (ids::filterKey,    0.2f + random.nextFloat() * 0.7f);
+    setReal (ids::filterVel,    0.2f + random.nextFloat() * 0.5f);
     setReal (ids::lfoShape,     pick ({ 0.0f, 0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f }));
     setReal (ids::lfoSync,      pick ({ 0.0f, 0.0f, 1.0f }));
     setReal (ids::lfoRate,      pick ({ 1.0f, 2.0f, 2.0f, 3.0f, 4.0f }));
-    setReal (ids::lfoRateHz,    0.2f + random.nextFloat() * 4.0f);
-    setReal (ids::motion,       random.nextFloat() * maxMotion);
+    setReal (ids::lfoRateHz,    0.1f + random.nextFloat() * 5.9f);
+
+    // At least a little movement: a random patch that sits on a static cutoff
+    // sounds like the filter is off, which is exactly the complaint this
+    // section has to avoid.
+    setReal (ids::motion,       0.15f + random.nextFloat() * maxMotion);
 
     // Second voice.  Tape is never randomised: it is a deliberate colour, and
     // turning it on behind the user's back is never welcome.  The duet,

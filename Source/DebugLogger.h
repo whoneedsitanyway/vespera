@@ -29,6 +29,7 @@ struct BlockSnapshot
     float density = 0.0f, mutate = 0.0f, swing = 0.0f, gate = 0.0f, accent = 0.0f;
     float attack = 0.0f, decay = 0.0f, sustain = 0.0f, release = 0.0f, detune = 0.0f;
     float filterCutoff = 0.0f, filterReso = 0.0f, filterEnv = 0.0f;
+    float filterKey = 0.0f, filterVel = 0.0f;
     float lfoRate = 0.0f, motion = 0.0f;
     float tape = 0.0f;
     int   secondRole = 0, secondOctave = 0, secondOffset = 0, secondInterval = 0;

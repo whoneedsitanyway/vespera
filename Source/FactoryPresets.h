@@ -13,7 +13,7 @@
 //==============================================================================
 namespace vespera::factory
 {
-    inline constexpr int kFactoryPresetVersion = 10;
+    inline constexpr int kFactoryPresetVersion = 11;
 
     struct Preset
     {
@@ -36,8 +36,10 @@ namespace vespera::factory
   <PARAM id="detune" value="0.15"/>
   <PARAM id="filterCutoff" value="6000.0"/>
   <PARAM id="filterEnv" value="0.2"/>
+  <PARAM id="filterKey" value="0.5"/>
   <PARAM id="filterReso" value="0.15"/>
   <PARAM id="filterType" value="1.0"/>
+  <PARAM id="filterVel" value="0.35"/>
   <PARAM id="gate" value="0.45"/>
   <PARAM id="key" value="0.0"/>
   <PARAM id="keyLock" value="0.0"/>
@@ -48,7 +50,7 @@ namespace vespera::factory
   <PARAM id="lfoSync" value="0.0"/>
   <PARAM id="limiter" value="1.0"/>
   <PARAM id="monitor" value="0.0"/>
-  <PARAM id="motion" value="0.1"/>
+  <PARAM id="motion" value="0.25"/>
   <PARAM id="mutate" value="0.0"/>
   <PARAM id="octaves" value="2.0"/>
   <PARAM id="output" value="0.0"/>
@@ -83,8 +85,10 @@ namespace vespera::factory
   <PARAM id="detune" value="0.08"/>
   <PARAM id="filterCutoff" value="9000.0"/>
   <PARAM id="filterEnv" value="0.35"/>
+  <PARAM id="filterKey" value="0.6"/>
   <PARAM id="filterReso" value="0.2"/>
   <PARAM id="filterType" value="1.0"/>
+  <PARAM id="filterVel" value="0.5"/>
   <PARAM id="gate" value="0.3"/>
   <PARAM id="key" value="4.0"/>
   <PARAM id="keyLock" value="0.0"/>
@@ -95,7 +99,7 @@ namespace vespera::factory
   <PARAM id="lfoSync" value="0.0"/>
   <PARAM id="limiter" value="1.0"/>
   <PARAM id="monitor" value="0.0"/>
-  <PARAM id="motion" value="0.15"/>
+  <PARAM id="motion" value="0.30"/>
   <PARAM id="mutate" value="0.0"/>
   <PARAM id="octaves" value="2.0"/>
   <PARAM id="output" value="0.0"/>
@@ -130,8 +134,10 @@ namespace vespera::factory
   <PARAM id="detune" value="0.3"/>
   <PARAM id="filterCutoff" value="4500.0"/>
   <PARAM id="filterEnv" value="0.15"/>
+  <PARAM id="filterKey" value="0.5"/>
   <PARAM id="filterReso" value="0.25"/>
   <PARAM id="filterType" value="1.0"/>
+  <PARAM id="filterVel" value="0.4"/>
   <PARAM id="gate" value="0.7"/>
   <PARAM id="key" value="9.0"/>
   <PARAM id="keyLock" value="0.0"/>
@@ -142,7 +148,7 @@ namespace vespera::factory
   <PARAM id="lfoSync" value="0.0"/>
   <PARAM id="limiter" value="1.0"/>
   <PARAM id="monitor" value="0.0"/>
-  <PARAM id="motion" value="0.2"/>
+  <PARAM id="motion" value="0.30"/>
   <PARAM id="mutate" value="0.0"/>
   <PARAM id="octaves" value="2.0"/>
   <PARAM id="output" value="0.0"/>
@@ -177,8 +183,10 @@ namespace vespera::factory
   <PARAM id="detune" value="0.12"/>
   <PARAM id="filterCutoff" value="900.0"/>
   <PARAM id="filterEnv" value="0.4"/>
+  <PARAM id="filterKey" value="0.4"/>
   <PARAM id="filterReso" value="0.3"/>
   <PARAM id="filterType" value="1.0"/>
+  <PARAM id="filterVel" value="0.3"/>
   <PARAM id="gate" value="0.8"/>
   <PARAM id="key" value="2.0"/>
   <PARAM id="keyLock" value="0.0"/>
@@ -189,7 +197,7 @@ namespace vespera::factory
   <PARAM id="lfoSync" value="0.0"/>
   <PARAM id="limiter" value="1.0"/>
   <PARAM id="monitor" value="0.0"/>
-  <PARAM id="motion" value="0.25"/>
+  <PARAM id="motion" value="0.35"/>
   <PARAM id="mutate" value="0.0"/>
   <PARAM id="octaves" value="1.0"/>
   <PARAM id="output" value="0.0"/>
@@ -224,8 +232,10 @@ namespace vespera::factory
   <PARAM id="detune" value="0.05"/>
   <PARAM id="filterCutoff" value="3000.0"/>
   <PARAM id="filterEnv" value="0.1"/>
+  <PARAM id="filterKey" value="0.7"/>
   <PARAM id="filterReso" value="0.2"/>
   <PARAM id="filterType" value="3.0"/>
+  <PARAM id="filterVel" value="0.45"/>
   <PARAM id="gate" value="0.25"/>
   <PARAM id="key" value="7.0"/>
   <PARAM id="keyLock" value="0.0"/>
@@ -236,7 +246,7 @@ namespace vespera::factory
   <PARAM id="lfoSync" value="0.0"/>
   <PARAM id="limiter" value="1.0"/>
   <PARAM id="monitor" value="0.0"/>
-  <PARAM id="motion" value="0.15"/>
+  <PARAM id="motion" value="0.30"/>
   <PARAM id="mutate" value="0.0"/>
   <PARAM id="octaves" value="3.0"/>
   <PARAM id="output" value="0.0"/>
@@ -271,8 +281,10 @@ namespace vespera::factory
   <PARAM id="detune" value="0.25"/>
   <PARAM id="filterCutoff" value="3000.0"/>
   <PARAM id="filterEnv" value="0.0"/>
+  <PARAM id="filterKey" value="0.5"/>
   <PARAM id="filterReso" value="0.1"/>
   <PARAM id="filterType" value="1.0"/>
+  <PARAM id="filterVel" value="0.25"/>
   <PARAM id="gate" value="0.9"/>
   <PARAM id="key" value="5.0"/>
   <PARAM id="keyLock" value="0.0"/>
@@ -283,7 +295,7 @@ namespace vespera::factory
   <PARAM id="lfoSync" value="0.0"/>
   <PARAM id="limiter" value="1.0"/>
   <PARAM id="monitor" value="0.0"/>
-  <PARAM id="motion" value="0.2"/>
+  <PARAM id="motion" value="0.30"/>
   <PARAM id="mutate" value="0.0"/>
   <PARAM id="octaves" value="1.0"/>
   <PARAM id="output" value="0.0"/>
@@ -318,8 +330,10 @@ namespace vespera::factory
   <PARAM id="detune" value="0.05"/>
   <PARAM id="filterCutoff" value="1200.0"/>
   <PARAM id="filterEnv" value="0.6"/>
+  <PARAM id="filterKey" value="0.8"/>
   <PARAM id="filterReso" value="0.7"/>
   <PARAM id="filterType" value="1.0"/>
+  <PARAM id="filterVel" value="0.6"/>
   <PARAM id="gate" value="0.4"/>
   <PARAM id="key" value="9.0"/>
   <PARAM id="keyLock" value="0.0"/>
@@ -330,7 +344,7 @@ namespace vespera::factory
   <PARAM id="lfoSync" value="0.0"/>
   <PARAM id="limiter" value="1.0"/>
   <PARAM id="monitor" value="0.0"/>
-  <PARAM id="motion" value="0.3"/>
+  <PARAM id="motion" value="0.45"/>
   <PARAM id="mutate" value="0.0"/>
   <PARAM id="octaves" value="1.0"/>
   <PARAM id="output" value="-2.0"/>
@@ -365,8 +379,10 @@ namespace vespera::factory
   <PARAM id="detune" value="0.2"/>
   <PARAM id="filterCutoff" value="2000.0"/>
   <PARAM id="filterEnv" value="0.0"/>
+  <PARAM id="filterKey" value="0.5"/>
   <PARAM id="filterReso" value="0.45"/>
   <PARAM id="filterType" value="2.0"/>
+  <PARAM id="filterVel" value="0.3"/>
   <PARAM id="gate" value="0.5"/>
   <PARAM id="key" value="11.0"/>
   <PARAM id="keyLock" value="0.0"/>
@@ -377,7 +393,7 @@ namespace vespera::factory
   <PARAM id="lfoSync" value="0.0"/>
   <PARAM id="limiter" value="1.0"/>
   <PARAM id="monitor" value="0.0"/>
-  <PARAM id="motion" value="0.35"/>
+  <PARAM id="motion" value="0.45"/>
   <PARAM id="mutate" value="0.0"/>
   <PARAM id="octaves" value="2.0"/>
   <PARAM id="output" value="0.0"/>

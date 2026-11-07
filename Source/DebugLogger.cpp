@@ -229,6 +229,8 @@ juce::String DebugLogger::formatLine (const BlockSnapshot& s, bool anomaly)
          << "/" << juce::String (s.filterCutoff, 0)
          << "/" << juce::String (s.filterReso, 2)
          << "/" << juce::String (s.filterEnv, 2)
+         << "/" << juce::String (s.filterKey, 2)
+         << "/" << juce::String (s.filterVel, 2)
          << " lfo=" << juce::String (s.lfoRate, 2)
          << (s.lfoSynced ? "sync" : "hz")
          << " shape=" << s.lfoShape

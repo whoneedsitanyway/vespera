@@ -11,8 +11,8 @@ namespace vespera
 //
 //  Same idea as the pattern contours: instead of a single sine, the LFO can
 //  run as a triangle, a ramp, a square, a stepped random value or a smooth
-//  random walk.  The phase is advanced once per block, which is plenty for a
-//  filter sweep.
+//  random walk.  The phase is advanced per render chunk (see processBlock), so
+//  a fast sweep never turns into a staircase.
 //==============================================================================
 class Lfo
 {
@@ -101,7 +101,15 @@ public:
                     walkTarget = rng.nextFloat() * 2.0f - 1.0f;
                     started = true;
                 }
-                walkValue += (walkTarget - walkValue) * 0.25f;
+
+                // Time-based smoothing instead of a fixed per-call step: the
+                // caller may advance the LFO in 64-sample chunks or in whole
+                // blocks, and the walk has to feel the same either way.
+                {
+                    const float alpha = juce::jlimit (0.0f, 1.0f,
+                                                      1.0f - std::exp (-(float) cycles / 0.037f));
+                    walkValue += (walkTarget - walkValue) * alpha;
+                }
                 return juce::jlimit (-1.0f, 1.0f, walkValue);
         }
     }

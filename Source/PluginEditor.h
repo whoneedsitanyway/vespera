@@ -94,7 +94,7 @@ private:
 
     // FILTER
     Combo filterTypeCombo, filterShapeCombo, filterRateCombo;
-    Knob cutoff, filterReso, filterEnv, motion, lfoRateHz;
+    Knob cutoff, filterReso, filterEnv, filterKey, filterVel, motion, lfoRateHz;
     juce::ToggleButton lfoSyncButton { "Sync" };
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfoSyncAttach;
 
@@ -140,7 +140,7 @@ private:
     static constexpr int kCompactHeight = 600;
 
     juce::Rectangle<int> enclosure;
-    juce::Rectangle<int> notesArea, patternArea, voiceArea, filterArea, secondArea, outArea;
+    juce::Rectangle<int> notesArea, patternArea, voiceArea, secondArea, filterArea, outArea;
     juce::Rectangle<int> displayArea;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (VesperaAudioProcessorEditor)
