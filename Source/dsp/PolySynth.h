@@ -46,6 +46,9 @@ public:
         for (auto& v : voices)
         {
             v = {};
+            // A default-constructed juce::ADSR assumes 44.1 kHz; without this the
+            // amp envelope would run at the wrong speed on any other rate.
+            v.adsr.setSampleRate (sr);
             v.filter.prepare (sr);
         }
 
@@ -113,6 +116,18 @@ public:
                 v.filter.setParams (filterParams);
     }
 
+    // Only the modulation moves inside a block, so it gets its own cheap path.
+    // A voice started after this call still gets the fresh value through
+    // filterParams in startVoice().
+    void setFilterModulation (float lfoOctaves) noexcept
+    {
+        filterParams.lfoOctaves = lfoOctaves;
+
+        for (auto& v : voices)
+            if (v.active)
+                v.filter.setLfoOctaves (lfoOctaves);
+    }
+
     void noteOff (int note)
     {
         for (auto& v : voices)
@@ -140,23 +155,17 @@ public:
 
         const double invSr = 1.0 / sr;
 
+        // Detune is the same for every voice, so the ratio is computed once per
+        // chunk instead of once per voice.
+        const double detuneRatio = std::pow (2.0, (double) detune * 22.0 / 1200.0);
+
         for (auto& v : voices)
         {
             if (! v.active)
                 continue;
 
-            const double freq1 = 440.0 * std::pow (2.0, (double) (v.note - 69) / 12.0);
-            const double cents = (double) detune * 22.0;
-            const double freq2 = freq1 * std::pow (2.0, cents / 1200.0);
-
-            const double inc1 = freq1 * invSr;
-            const double inc2 = freq2 * invSr;
-
-            const float pan = juce::jlimit (-0.7f, 0.7f,
-                                            ((float) (v.note % 12) / 11.0f - 0.5f) * 0.8f);
-            const float gainL = std::cos ((pan * 0.5f + 0.5f) * juce::MathConstants<float>::halfPi);
-            const float gainR = std::sin ((pan * 0.5f + 0.5f) * juce::MathConstants<float>::halfPi);
-            const float level = 0.16f * v.velocity;
+            const double inc1 = v.freq * invSr;
+            const double inc2 = inc1 * detuneRatio;
 
             for (int n = 0; n < numSamples; ++n)
             {
@@ -179,14 +188,14 @@ public:
 
                 const float a = oscillator (v.phase1, (float) inc1, wave);
                 const float b = oscillator (v.phase2, (float) inc2, wave);
-                const float s = 0.5f * (a + b) * env * level;
+                const float s = 0.5f * (a + b) * env * v.level;
 
                 // Filter the mono voice before the pan spread: a resonant peak
                 // belongs to the note, not to the stereo image.
                 const float f = v.filter.process (s);
 
-                L[n] += f * gainL;
-                R[n] += f * gainR;
+                L[n] += f * v.gainL;
+                R[n] += f * v.gainR;
 
                 v.phase1 += inc1;
                 if (v.phase1 >= 1.0) v.phase1 -= 1.0;
@@ -214,10 +223,29 @@ private:
         float velocity = 0.8f;
         double phase1 = 0.0;
         double phase2 = 0.25;
+
+        // Pitch, pan and level only depend on the note, so they are resolved
+        // once at note-on instead of on every render chunk.
+        double freq = 440.0;
+        float  gainL = 0.7071068f, gainR = 0.7071068f;
+        float  level = 0.128f;
+
         juce::ADSR adsr;
         VoiceFilter filter;
         uint64_t age = 0;
     };
+
+    // Resolves the per-note values (pitch, pan law, voice level).
+    static void voiceSetup (Voice& v) noexcept
+    {
+        v.freq = 440.0 * std::pow (2.0, (double) (v.note - 69) / 12.0);
+
+        const float pan = juce::jlimit (-0.7f, 0.7f,
+                                        ((float) (v.note % 12) / 11.0f - 0.5f) * 0.8f);
+        v.gainL = std::cos ((pan * 0.5f + 0.5f) * juce::MathConstants<float>::halfPi);
+        v.gainR = std::sin ((pan * 0.5f + 0.5f) * juce::MathConstants<float>::halfPi);
+        v.level = 0.16f * v.velocity;
+    }
 
     void startVoice (int note, float velocity, int durationSamples)
     {
@@ -244,6 +272,8 @@ private:
         slot->age = ++ageCounter;
         slot->adsr.reset();
         slot->adsr.noteOn();
+
+        voiceSetup (*slot);
 
         // A stolen or freshly started voice has to pick up the current filter
         // settings before its first sample; setFilterParams() only reaches the

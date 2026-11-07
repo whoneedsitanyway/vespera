@@ -741,7 +741,9 @@ void VesperaAudioProcessorEditor::resized()
     // FILTER
     {
         auto col = filterArea.reduced (10, 8);
-        col.removeFromTop (20);
+        // Same clearance as OUTPUT below: the section rule sits 27 px from the
+        // top of the area, so the first row of controls must not hug it.
+        col.removeFromTop (30);
 
         // Two columns: the mode choices (TYPE / LFO / DIVISION) stacked on the
         // left, the LFO speed (RATE with SYNC underneath) on the right.
@@ -761,7 +763,17 @@ void VesperaAudioProcessorEditor::resized()
             placeGrid ({ &lfoRateHz }, rateCell, 1);
 
             speedCol.removeFromTop (8);
-            lfoSyncButton.setBounds (speedCol.removeFromTop (26).reduced (6, 0));
+
+            // Centre SYNC on the RATE knob itself so the two read as one
+            // control, instead of relying on a hard-coded inset that would drift
+            // whenever the grid padding changes.
+            const auto knob = lfoRateHz.slider.getBounds();
+            auto syncRow = speedCol.removeFromTop (26);
+            const int syncW = juce::jlimit (48, 96, knob.getWidth());
+
+            lfoSyncButton.setBounds (juce::Rectangle<int> (syncW, syncRow.getHeight())
+                                         .withCentre ({ knob.getCentreX(),
+                                                        syncRow.getCentreY() }));
         }
 
         col.removeFromTop (8);

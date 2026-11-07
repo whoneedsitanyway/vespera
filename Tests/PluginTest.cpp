@@ -1684,6 +1684,11 @@ int main()
                                   && syncButton->getY() > rateKnob->getBounds().getBottom()
                                   && ! syncButton->getBounds().intersects (divisionCombo->getBounds());
 
+        // SYNC is centred on the RATE knob, not left-aligned in the column.
+        const bool syncCentred = foundControls
+                              && std::abs (syncButton->getBounds().getCentreX()
+                                               - rateKnob->getBounds().getCentreX()) <= 2;
+
         std::cout << "filter sync: freeDefault=" << freeByDefault
                   << " found=" << foundControls
                   << " activeFree=" << knobActiveInFree
@@ -1692,11 +1697,12 @@ int main()
                   << " laidOut=" << laidOut
                   << " combos=" << combosFound
                   << " stacked=" << stackedChoices
-                  << " speedRight=" << speedOnTheRight << std::endl;
+                  << " speedRight=" << speedOnTheRight
+                  << " centred=" << syncCentred << std::endl;
 
         if (! (freeByDefault && foundControls && knobActiveInFree
                && knobLockedInSync && knobBackInFree && laidOut
-               && stackedChoices && speedOnTheRight))
+               && stackedChoices && speedOnTheRight && syncCentred))
         {
             ++failures;
             std::cout << "FAIL: filter SYNC does not lock the RATE knob" << std::endl;

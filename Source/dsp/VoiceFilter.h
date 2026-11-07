@@ -70,9 +70,26 @@ public:
 
     void noteOff() { adsr.noteOff(); }
 
+    // The global LFO is advanced every render chunk, while every other setting
+    // changes at most once per block.  This setter keeps the per-chunk cost to a
+    // single float instead of re-clamping the whole parameter block.
+    void setLfoOctaves (float octaves) noexcept
+    {
+        lfoOctaves = juce::jlimit (-6.0f, 6.0f, octaves);
+    }
+
     void setParams (const VoiceFilterParams& p)
     {
-        type       = juce::jlimit (0, 3, p.type);
+        // Recompute the coefficients on the next sample after a mode change:
+        // while the filter is Off the integrators are parked and the stored
+        // coefficients are stale.
+        const int newType = juce::jlimit (0, 3, p.type);
+        if (newType != type)
+        {
+            type = newType;
+            countdown = 0;
+        }
+
         cutoffHz   = juce::jlimit (20.0f, 18000.0f, p.cutoffHz);
         resonance  = juce::jlimit (0.0f, 1.0f, p.resonance);
         envAmount  = juce::jlimit (0.0f, 1.0f, p.envAmount);
@@ -126,6 +143,14 @@ public:
         const float y = (type == 2) ? v1
                       : (type == 3) ? (x - k * v1 - v2)
                                     : v2;
+
+        // A single non-finite sample would otherwise poison the integrators and
+        // silence this voice for the rest of the note; park the filter instead.
+        if (! std::isfinite (y))
+        {
+            ic1 = ic2 = 0.0f;
+            return 0.0f;
+        }
 
         return softClip (y);
     }

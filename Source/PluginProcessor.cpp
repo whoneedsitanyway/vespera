@@ -886,20 +886,29 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     vf.keyTrack  = rp.filterKey->load();
     vf.velAmount = rp.filterVel->load();
 
+    // The static settings are pushed once per block; only the LFO moves inside
+    // it, so the chunk loop below updates just the modulation.
+    synth.setFilterParams (vf);
+
     int pos = 0;
 
     if (! sequencerRunning)
     {
         // Transport is stopped: keep rendering so MONITOR notes and release
-        // tails still sound, but never advance the pattern.
-        const float lfoValue = lfo.advance (lfoHz * (double) numSamples / currentSampleRate,
-                                            lfoShape, rng);
-        vf.lfoOctaves = motion * lfoValue;
-        synth.setFilterParams (vf);
+        // tails still sound, but never advance the pattern.  The chunk size
+        // matches the sequencer loop so the LFO steps identically in both paths.
+        while (pos < numSamples)
+        {
+            const int chunk = juce::jmin (64, numSamples - pos);
 
-        synth.render (outBuffer.getWritePointer (0),
-                      outBuffer.getWritePointer (1), numSamples);
-        pos = numSamples;
+            synth.setFilterModulation (motion * lfo.advance (lfoHz * (double) chunk
+                                                                / currentSampleRate,
+                                                             lfoShape, rng));
+            synth.render (outBuffer.getWritePointer (0) + pos,
+                          outBuffer.getWritePointer (1) + pos, chunk);
+
+            pos += chunk;
+        }
     }
 
     while (pos < numSamples)
@@ -918,10 +927,9 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         // become five audible steps.
         chunk = juce::jmin (chunk, 64);
 
-        const float lfoValue = lfo.advance (lfoHz * (double) chunk / currentSampleRate,
-                                            lfoShape, rng);
-        vf.lfoOctaves = motion * lfoValue;
-        synth.setFilterParams (vf);
+        synth.setFilterModulation (motion * lfo.advance (lfoHz * (double) chunk
+                                                            / currentSampleRate,
+                                                         lfoShape, rng));
 
         synth.render (outBuffer.getWritePointer (0) + pos,
                       outBuffer.getWritePointer (1) + pos, chunk);
