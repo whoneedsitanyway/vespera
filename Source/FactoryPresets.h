@@ -13,7 +13,7 @@
 //==============================================================================
 namespace vespera::factory
 {
-    inline constexpr int kFactoryPresetVersion = 9;
+    inline constexpr int kFactoryPresetVersion = 10;
 
     struct Preset
     {
@@ -57,7 +57,7 @@ namespace vespera::factory
   <PARAM id="release" value="0.4"/>
   <PARAM id="scale" value="1.0"/>
   <PARAM id="secondDensity" value="0.5"/>
-  <PARAM id="secondInterval" value="0.0"/>
+  <PARAM id="secondInterval" value="1.0"/>
   <PARAM id="secondLevel" value="0.6"/>
   <PARAM id="secondOctave" value="0.0"/>
   <PARAM id="secondOffset" value="2.0"/>
@@ -104,7 +104,7 @@ namespace vespera::factory
   <PARAM id="release" value="0.25"/>
   <PARAM id="scale" value="8.0"/>
   <PARAM id="secondDensity" value="0.6"/>
-  <PARAM id="secondInterval" value="0.0"/>
+  <PARAM id="secondInterval" value="1.0"/>
   <PARAM id="secondLevel" value="0.3"/>
   <PARAM id="secondOctave" value="1.0"/>
   <PARAM id="secondOffset" value="2.0"/>
@@ -151,7 +151,7 @@ namespace vespera::factory
   <PARAM id="release" value="0.6"/>
   <PARAM id="scale" value="1.0"/>
   <PARAM id="secondDensity" value="0.45"/>
-  <PARAM id="secondInterval" value="0.0"/>
+  <PARAM id="secondInterval" value="1.0"/>
   <PARAM id="secondLevel" value="0.5"/>
   <PARAM id="secondOctave" value="0.0"/>
   <PARAM id="secondOffset" value="3.0"/>
@@ -198,7 +198,7 @@ namespace vespera::factory
   <PARAM id="release" value="0.8"/>
   <PARAM id="scale" value="2.0"/>
   <PARAM id="secondDensity" value="0.5"/>
-  <PARAM id="secondInterval" value="0.0"/>
+  <PARAM id="secondInterval" value="1.0"/>
   <PARAM id="secondLevel" value="0.65"/>
   <PARAM id="secondOctave" value="0.0"/>
   <PARAM id="secondOffset" value="2.0"/>
@@ -245,7 +245,7 @@ namespace vespera::factory
   <PARAM id="release" value="0.8"/>
   <PARAM id="scale" value="4.0"/>
   <PARAM id="secondDensity" value="0.5"/>
-  <PARAM id="secondInterval" value="2.0"/>
+  <PARAM id="secondInterval" value="3.0"/>
   <PARAM id="secondLevel" value="0.35"/>
   <PARAM id="secondOctave" value="1.0"/>
   <PARAM id="secondOffset" value="2.0"/>
@@ -292,7 +292,7 @@ namespace vespera::factory
   <PARAM id="release" value="1.2"/>
   <PARAM id="scale" value="0.0"/>
   <PARAM id="secondDensity" value="0.4"/>
-  <PARAM id="secondInterval" value="0.0"/>
+  <PARAM id="secondInterval" value="1.0"/>
   <PARAM id="secondLevel" value="0.5"/>
   <PARAM id="secondOctave" value="-1.0"/>
   <PARAM id="secondOffset" value="2.0"/>
@@ -339,7 +339,7 @@ namespace vespera::factory
   <PARAM id="release" value="0.15"/>
   <PARAM id="scale" value="3.0"/>
   <PARAM id="secondDensity" value="0.75"/>
-  <PARAM id="secondInterval" value="0.0"/>
+  <PARAM id="secondInterval" value="1.0"/>
   <PARAM id="secondLevel" value="0.55"/>
   <PARAM id="secondOctave" value="0.0"/>
   <PARAM id="secondOffset" value="2.0"/>
@@ -386,7 +386,7 @@ namespace vespera::factory
   <PARAM id="release" value="1.5"/>
   <PARAM id="scale" value="1.0"/>
   <PARAM id="secondDensity" value="0.5"/>
-  <PARAM id="secondInterval" value="0.0"/>
+  <PARAM id="secondInterval" value="1.0"/>
   <PARAM id="secondLevel" value="0.45"/>
   <PARAM id="secondOctave" value="0.0"/>
   <PARAM id="secondOffset" value="2.0"/>

@@ -559,9 +559,11 @@ int main()
                 bassOk = false;
         }
 
-        // Answer reads its own line, delayed by OFFSET steps.
+        // Answer reads its own line, delayed by OFFSET steps.  INTERVAL at
+        // Unison keeps the line exactly as generated.
         sv.role = kSecondAnswer;
         sv.offset = 2;
+        sv.interval = 0;   // Unison
         for (int i = 0; i < pp.steps; ++i)
         {
             const auto& s = answer.getStep ((i - 2 + pp.steps) % pp.steps);
@@ -577,11 +579,89 @@ int main()
                 answerOk = false;
         }
 
+        // INTERVAL has to actually move the answer line: 3rd and 5th must give
+        // different pitches on at least one step, and every pitch must stay in
+        // the key.
+        bool answerIntervalWorks = false;
+        bool answerIntervalInKey = true;
+
+        {
+            sv.role = kSecondAnswer;
+            sv.offset = 0;
+            sv.interval = 1;   // 3rd below
+            std::vector<int> thirdNotes;
+
+            for (int i = 0; i < pp.steps; ++i)
+            {
+                const auto sn = secondVoiceAt (i, pp.steps, lead.getStep (i), &answer, pool, 4,
+                                               sv, pp.key, pp.scale, 0);
+                thirdNotes.push_back (sn.active ? sn.note : -1);
+
+                if (sn.active && ! Scale::isInScale (sn.note, pp.key, pp.scale))
+                    answerIntervalInKey = false;
+            }
+
+            sv.interval = 3;   // 5th below
+            for (int i = 0; i < pp.steps; ++i)
+            {
+                const auto sn = secondVoiceAt (i, pp.steps, lead.getStep (i), &answer, pool, 4,
+                                               sv, pp.key, pp.scale, 0);
+
+                if (sn.active && ! Scale::isInScale (sn.note, pp.key, pp.scale))
+                    answerIntervalInKey = false;
+
+                if (sn.active && sn.note != thirdNotes[(size_t) i])
+                    answerIntervalWorks = true;
+            }
+        }
+
+        // Harmony must be different for a 3rd and a 5th as well, and DRONE must
+        // move its pedal when INTERVAL changes.
+        bool harmonyIntervalWorks = false;
+        bool droneIntervalWorks = false;
+
+        {
+            sv.role = kSecondHarmony;
+            sv.interval = 1;
+            std::vector<int> thirdNotes;
+
+            for (int i = 0; i < pp.steps; ++i)
+            {
+                const auto sn = secondVoiceAt (i, pp.steps, lead.getStep (i), &answer, pool, 4,
+                                               sv, pp.key, pp.scale, 0);
+                thirdNotes.push_back (sn.active ? sn.note : -1);
+            }
+
+            sv.interval = 3;
+            for (int i = 0; i < pp.steps; ++i)
+            {
+                const auto sn = secondVoiceAt (i, pp.steps, lead.getStep (i), &answer, pool, 4,
+                                               sv, pp.key, pp.scale, 0);
+
+                if (sn.active && sn.note != thirdNotes[(size_t) i])
+                    harmonyIntervalWorks = true;
+            }
+        }
+
+        {
+            sv.role = kSecondDrone;
+            sv.interval = 0;
+            const auto unison = secondVoiceAt (0, pp.steps, lead.getStep (0), &answer, pool, 4,
+                                               sv, pp.key, pp.scale, 0);
+
+            sv.interval = 3;   // 5th above the tonic
+            const auto fifth = secondVoiceAt (0, pp.steps, lead.getStep (0), &answer, pool, 4,
+                                              sv, pp.key, pp.scale, 0);
+
+            droneIntervalWorks = unison.active && fifth.active && fifth.note != unison.note
+                                 && Scale::isInScale (fifth.note, pp.key, pp.scale);
+        }
+
         // Harmony and drone must stay inside the key for every role/interval.
         for (int role = kSecondBass; role < kNumSecondRoles; ++role)
         {
             sv.role = role;
-            for (int interval = 0; interval < 4; ++interval)
+            for (int interval = 0; interval < 5; ++interval)
             {
                 sv.interval = interval;
                 for (int i = 0; i < pp.steps; ++i)
@@ -605,10 +685,16 @@ int main()
         std::cout << "second voice: octave=" << octaveOk
                   << " bass=" << bassOk
                   << " answer=" << answerOk
+                  << " answerInterval=" << (answerIntervalWorks && answerIntervalInKey)
+                  << " harmonyInterval=" << harmonyIntervalWorks
+                  << " droneInterval=" << droneIntervalWorks
                   << " inScale=" << allInScale
                   << " densityZeroOff=" << densityZeroOff << std::endl;
 
-        if (! (octaveOk && bassOk && answerOk && allInScale && densityZeroOff))
+        if (! (octaveOk && bassOk && answerOk
+               && answerIntervalWorks && answerIntervalInKey
+               && harmonyIntervalWorks && droneIntervalWorks
+               && allInScale && densityZeroOff))
         {
             ++failures;
             std::cout << "FAIL: second voice broke its musical contract" << std::endl;

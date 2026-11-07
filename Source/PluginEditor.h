@@ -42,6 +42,7 @@ public:
 private:
     void timerCallback() override;
     void updateLfoRateUi();
+    void updateSecondVoiceUi();
     void setCompact (bool shouldBeCompact);
 
     void refreshPresets();
@@ -132,6 +133,7 @@ private:
     bool compact = false;
     bool darkTheme = true;
     bool lfoSynced = false;
+    int  secondRoleCached = -1;
 
     static constexpr int kWidth         = 1280;
     static constexpr int kFullHeight    = 820;

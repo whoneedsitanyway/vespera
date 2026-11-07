@@ -47,8 +47,17 @@ inline const juce::StringArray& getSecondRoleNames()
 
 inline const juce::StringArray& getSecondIntervalNames()
 {
-    static const juce::StringArray names { "3rd", "4th", "5th", "6th" };
+    static const juce::StringArray names { "Unison", "3rd", "4th", "5th", "6th" };
     return names;
+}
+
+// Interval index -> diatonic degrees away from the role's base note.
+// Index 0 is a unison, so the same control can also mean "leave it alone"
+// (which is what ANSWER wants by default).
+inline int secondIntervalDegrees (int interval)
+{
+    static constexpr int degrees[] = { 0, 2, 3, 4, 5 };
+    return degrees[juce::jlimit (0, 4, interval)];
 }
 
 struct SecondVoiceParams
@@ -58,7 +67,7 @@ struct SecondVoiceParams
     int   offset   = 2;            // 0..8 steps (Answer)
     float density  = 0.5f;         // 0..1
     float level    = 0.6f;         // 0..1
-    int   interval = 0;            // 0..3 -> 3rd .. 6th below (Harmony)
+    int   interval = 1;            // 0..4 -> Unison, 3rd .. 6th
 };
 
 struct SecondNote
@@ -116,7 +125,17 @@ inline SecondNote secondVoiceAt (int step, int length,
                 return out;
 
             const int pi = juce::jlimit (0, poolCount - 1, s.poolIndex);
-            note     = poolNotes[pi] + 12 * (s.octave + reg);
+
+            // INTERVAL transposes the answer line diatonically below the lead's
+            // register, so OFFSET + INTERVAL read as a real call-and-response
+            // instead of a plain repeat.  Unison keeps the line as generated.
+            const int degrees = secondIntervalDegrees (p.interval);
+            int pitch = poolNotes[pi] + 12 * (s.octave + reg);
+
+            if (degrees != 0)
+                pitch = Scale::transposeDegrees (pitch, -degrees, key, scale);
+
+            note     = pitch;
             velocity = s.velocity * level;
             break;
         }
@@ -145,8 +164,9 @@ inline SecondNote secondVoiceAt (int step, int length,
             if (step % period != 0)
                 return out;
 
-            static constexpr int degrees[] = { 2, 3, 4, 5 };   // 3rd .. 6th below
-            const int d = degrees[juce::jlimit (0, 3, p.interval)];
+            // INTERVAL is the diatonic distance below the lead: Unison doubles
+            // the lead, 3rd..6th colour it.
+            const int d = secondIntervalDegrees (p.interval);
 
             note     = Scale::transposeDegrees (leadPitch, -d, key, scale) + 12 * reg;
             velocity = leadStep.velocity * level;
@@ -177,7 +197,15 @@ inline SecondNote secondVoiceAt (int step, int length,
                 return out;
 
             // The tonic of the key is a stable pedal regardless of the pool.
-            note        = 48 + juce::jlimit (0, 11, key) + 12 * reg;
+            // INTERVAL moves the pedal up the scale (a fifth above the tonic is
+            // the classic open drone).
+            int tonic = 48 + juce::jlimit (0, 11, key) + 12 * reg;
+
+            const int d = secondIntervalDegrees (p.interval);
+            if (d != 0)
+                tonic = Scale::transposeDegrees (tonic, d, key, scale);
+
+            note        = tonic;
             velocity    = level * 0.8f;
             lengthSteps = (float) period + 0.9f;   // ring until the next trigger
             break;

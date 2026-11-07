@@ -195,7 +195,7 @@ APVTS::ParameterLayout VesperaAudioProcessor::createParameterLayout()
 
     // --- Second voice --------------------------------------------------------
     addChoice (ids::secondRole,     "Role", getSecondRoleNames(), kSecondOff);
-    addChoice (ids::secondInterval, "Interval", getSecondIntervalNames(), 0);
+    addChoice (ids::secondInterval, "Interval", getSecondIntervalNames(), 1);
 
     {
         auto attrs = juce::AudioParameterIntAttributes()
@@ -263,6 +263,11 @@ void VesperaAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBloc
     lastAccent = -1.0f;
     lastSecondDensity = -1.0f;
     lastSecondContour = -1;
+    lastSecondRole = -1;
+    lastSecondOffset = -1;
+    lastSecondInterval = -1;
+    lastSecondOctave = -99;
+    lastSecondLevel = -1.0f;
     pendingPoolClear.store (false, std::memory_order_relaxed);
     lastSequencerRunning = true;
     displayRunning.store (true, std::memory_order_relaxed);
@@ -800,6 +805,36 @@ void VesperaAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
         updatePatternView (notes, n);
     }
 
+    // The duet controls are read while the pattern snapshot is built, not while
+    // the pattern is generated.  Without this the display would ignore ROLE /
+    // OFFSET / INTERVAL / REGISTER until the next step boundary, and with the
+    // transport stopped that boundary never comes.
+    {
+        const auto svp = currentSecondParams();
+
+        if (svp.role != lastSecondRole
+            || svp.offset != lastSecondOffset
+            || svp.interval != lastSecondInterval
+            || svp.octave != lastSecondOctave
+            || std::abs (svp.level - lastSecondLevel) > 1.0e-6f
+            || std::abs (svp.density - lastSecondDensity) > 1.0e-6f)
+        {
+            lastSecondRole     = svp.role;
+            lastSecondOffset   = svp.offset;
+            lastSecondInterval = svp.interval;
+            lastSecondOctave   = svp.octave;
+            lastSecondLevel    = svp.level;
+
+            int notes[NotePool::kMaxNotes] {};
+            const int n = notePool.getSorted (notes, poolSize);
+
+            // DENSITY regenerates the answer line; the other controls only
+            // change how it is read.
+            ensurePattern (notes, n, currentPatternParams());
+            updatePatternView (notes, n);
+        }
+    }
+
     // --- synth + pattern -----------------------------------------------------
     // The buffer is sized once in prepareToPlay; only grow it if the host asks
     // for a bigger block than advertised, so the audio thread never reallocates.
@@ -1165,7 +1200,7 @@ void VesperaAudioProcessor::randomizeParameters()
                                             : kSecondDrone;
 
     setReal (ids::secondRole,     (float) secondRole);
-    setReal (ids::secondInterval, pick ({ 0.0f, 1.0f, 2.0f, 3.0f }));
+    setReal (ids::secondInterval, pick ({ 1.0f, 1.0f, 2.0f, 3.0f, 4.0f }));
     setReal (ids::secondOctave,   pick ({ -1.0f, 0.0f, 0.0f, 0.0f, 1.0f }));
     setReal (ids::secondOffset,   pick ({ 1.0f, 2.0f, 2.0f, 3.0f, 4.0f }));
     setReal (ids::secondDensity,  0.35f + random.nextFloat() * 0.5f);

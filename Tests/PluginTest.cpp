@@ -953,6 +953,154 @@ int main()
         }
     }
 
+    // --- (1g3) duet controls refresh the display with the transport stopped --
+    // ROLE / OFFSET are read while the snapshot is built, not while the pattern
+    // is generated.  With Play Sync on and the transport stopped triggerStep()
+    // never runs, so the snapshot has to be rebuilt from processBlock().
+    {
+        const double sr = 48000.0;
+        const int block = 512;
+
+        TestPlayHead head;
+        head.playing = false;
+
+        VesperaAudioProcessor proc;
+        proc.setPlayConfigDetails (0, 2, sr, block);
+        proc.setPlayHead (&head);
+
+        setParam (proc, "key", 0.0f);
+        setParam (proc, "scale", 0.0f);
+        setParam (proc, "poolSize", 4.0f);
+        setParam (proc, "steps", 8.0f);
+        setParam (proc, "density", 1.0f);
+        setParam (proc, "octaves", 1.0f);
+        setParam (proc, "mutate", 0.0f);
+        setParam (proc, "rate", 3.0f);
+        setParam (proc, "transportSync", 1.0f);
+        setParam (proc, "secondRole", 0.0f);        // Off
+        setParam (proc, "secondDensity", 1.0f);
+        setParam (proc, "secondLevel", 0.9f);
+        setParam (proc, "secondOffset", 0.0f);
+
+        proc.prepareToPlay (sr, block);
+
+        juce::AudioBuffer<float> buffer (2, block);
+        juce::MidiBuffer midi;
+        midi.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 0);
+        midi.addEvent (juce::MidiMessage::noteOn (1, 64, 0.8f), 0);
+        midi.addEvent (juce::MidiMessage::noteOn (1, 67, 0.8f), 0);
+
+        buffer.clear();
+        proc.processBlock (buffer, midi);
+        midi.clear();
+
+        auto anySecond = [] (const vespera::PatternView& v)
+        {
+            for (int i = 0; i < v.steps; ++i)
+                if (v.secondActive[i])
+                    return true;
+            return false;
+        };
+
+        auto noteAt = [] (const vespera::PatternView& v, int step)
+        {
+            return step < vespera::PatternEngine::kMaxSteps ? v.secondNote[step] : -1;
+        };
+
+        vespera::PatternView offView;
+        const bool haveOff = proc.getPatternView (offView);
+        const bool offSilent = ! anySecond (offView);
+
+        // Switch to ANSWER while the transport is still stopped.
+        setParam (proc, "secondRole", 1.0f);        // Answer
+        setParam (proc, "secondOffset", 0.0f);
+        buffer.clear();
+        proc.processBlock (buffer, midi);
+
+        vespera::PatternView answerA;
+        const bool haveA = proc.getPatternView (answerA);
+
+        // Moving OFFSET must shift the answer line in the snapshot as well.  The
+        // helper reads its own line `offset` steps late, so the expected view is
+        // the previous snapshot rotated by one step.
+        setParam (proc, "secondOffset", 1.0f);
+        buffer.clear();
+        proc.processBlock (buffer, midi);
+
+        vespera::PatternView answerB;
+        const bool haveB = proc.getPatternView (answerB);
+
+        const int shift = 1;
+        bool offsetShifted = answerB.steps == answerA.steps && answerA.steps > 0;
+        bool offsetMoved = false;
+
+        for (int i = 0; i < answerB.steps; ++i)
+        {
+            if (i < answerA.steps && noteAt (answerB, i) != noteAt (answerA, i))
+                offsetMoved = true;
+
+            if (offsetShifted)
+            {
+                const int expected = noteAt (answerA,
+                                             (i - shift + answerA.steps) % answerA.steps);
+
+                if (noteAt (answerB, i) != expected)
+                    offsetShifted = false;
+            }
+        }
+
+        const bool answerOn = anySecond (answerA);
+
+        // INTERVAL must move the answer line too: 3rd -> 5th has to change at
+        // least one pitch, and every pitch must stay in the key.
+        setParam (proc, "secondInterval", 1.0f);    // 3rd
+        setParam (proc, "secondOffset", 0.0f);
+        buffer.clear();
+        proc.processBlock (buffer, midi);
+
+        vespera::PatternView thirdView;
+        const bool haveThird = proc.getPatternView (thirdView);
+
+        setParam (proc, "secondInterval", 3.0f);    // 5th
+        buffer.clear();
+        proc.processBlock (buffer, midi);
+
+        vespera::PatternView fifthView;
+        const bool haveFifth = proc.getPatternView (fifthView);
+
+        bool intervalMoved = false;
+        bool intervalInKey = true;
+
+        for (int i = 0; i < fifthView.steps; ++i)
+        {
+            if (i < thirdView.steps && noteAt (fifthView, i) != noteAt (thirdView, i))
+                intervalMoved = true;
+
+            if (fifthView.secondActive[i]
+                && ! vespera::Scale::isInScale (fifthView.secondNote[i],
+                                                fifthView.key, fifthView.scale))
+                intervalInKey = false;
+        }
+
+        std::cout << "duet view: have=" << (haveOff && haveA && haveB)
+                  << " offSilent=" << offSilent
+                  << " answerOn=" << answerOn
+                  << " offsetShifted=" << offsetShifted
+                  << " offsetMoved=" << offsetMoved
+                  << " intervalMoved=" << intervalMoved
+                  << " intervalInKey=" << intervalInKey << std::endl;
+
+        if (! (haveOff && haveA && haveB && haveThird && haveFifth
+               && offSilent && answerOn && offsetShifted && offsetMoved
+               && intervalMoved && intervalInKey))
+        {
+            ++failures;
+            std::cout << "FAIL: duet controls do not refresh the display while stopped"
+                      << std::endl;
+        }
+    }
+
+
     // --- (1h) chords ---------------------------------------------------------
     {
         struct ChordRender

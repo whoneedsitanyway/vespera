@@ -162,16 +162,19 @@ VesperaAudioProcessorEditor::VesperaAudioProcessorEditor (VesperaAudioProcessor&
               "an Octave double or a Drone pedal");
     addCombo (secondIntervalCombo, ids::secondInterval, "INTERVAL",
               getSecondIntervalNames(),
-              "INTERVAL - diatonic distance below the lead for HARMONY");
+              "INTERVAL - diatonic distance from the role's base note: Unison / 3rd / 4th / "
+              "5th / 6th below the lead (ANSWER, HARMONY) or above the tonic (DRONE)");
 
     addKnob (secondOctave,  ids::secondOctave,  "REGISTER",
              "REGISTER - octave shift of the second voice (-2..+2)");
     addKnob (secondOffset,  ids::secondOffset,  "OFFSET",
-             "OFFSET - how many steps the ANSWER line lags behind the lead");
+             "OFFSET - how many steps the ANSWER line lags behind the lead (ANSWER only)");
     addKnob (secondDensity, ids::secondDensity, "DENSITY",
              "DENSITY - how often the second voice plays");
     addKnob (secondLevel,   ids::secondLevel,   "LEVEL",
              "LEVEL - velocity of the second voice relative to the lead");
+
+    updateSecondVoiceUi();
 
     // --- OUTPUT --------------------------------------------------------------
     addKnob (output, ids::output, "OUTPUT", "OUTPUT - output level");
@@ -259,6 +262,11 @@ VesperaAudioProcessorEditor::VesperaAudioProcessorEditor (VesperaAudioProcessor&
         processorRef.markDefaultPresetApplied();
     }
 
+    // A preset (or the restored host state) may have changed the role after the
+    // first pass, so refresh the dependent controls once more.
+    secondRoleCached = -1;
+    updateSecondVoiceUi();
+
     addAndMakeVisible (patternDisplay);
 }
 
@@ -272,6 +280,7 @@ VesperaAudioProcessorEditor::~VesperaAudioProcessorEditor()
 void VesperaAudioProcessorEditor::timerCallback()
 {
     updateLfoRateUi();
+    updateSecondVoiceUi();
     logButton.setWarning (processorRef.getDebugLogger().hasAnomaly());
 }
 
@@ -288,6 +297,46 @@ void VesperaAudioProcessorEditor::updateLfoRateUi()
     lfoRateHz.slider.setEnabled (! synced);
     lfoRateHz.slider.setAlpha (synced ? 0.35f : 1.0f);
     lfoRateHz.label.setAlpha (synced ? 0.45f : 1.0f);
+}
+
+//==============================================================================
+void VesperaAudioProcessorEditor::updateSecondVoiceUi()
+{
+    const int role = (int) processorRef.apvts.getRawParameterValue (ids::secondRole)->load();
+
+    if (role == secondRoleCached)
+        return;
+
+    secondRoleCached = role;
+
+    // OFFSET only moves the ANSWER line, INTERVAL colours ANSWER, HARMONY and
+    // DRONE, and the rest of the controls are inert while the duet is off: a
+    // knob that looks live but does nothing is the fastest way to make a
+    // control feel broken.
+    auto setKnobActive = [] (Knob& k, bool active)
+    {
+        k.slider.setEnabled (active);
+        k.slider.setAlpha (active ? 1.0f : 0.35f);
+        k.label.setAlpha (active ? 1.0f : 0.45f);
+    };
+
+    auto setComboActive = [] (Combo& c, bool active)
+    {
+        c.box.setEnabled (active);
+        c.box.setAlpha (active ? 1.0f : 0.35f);
+        c.label.setAlpha (active ? 1.0f : 0.45f);
+    };
+
+    const bool off     = role == kSecondOff;
+    const bool answer  = role == kSecondAnswer;
+    const bool harmony = role == kSecondHarmony;
+    const bool drone   = role == kSecondDrone;
+
+    setKnobActive  (secondOffset,   answer);
+    setComboActive (secondIntervalCombo, answer || harmony || drone);
+    setKnobActive  (secondOctave,   ! off);
+    setKnobActive  (secondDensity,  ! off);
+    setKnobActive  (secondLevel,    ! off);
 }
 
 //==============================================================================

@@ -277,6 +277,11 @@ private:
     float  lastAccent = -1.0f;
     float  lastSecondDensity = -1.0f;
     int    lastSecondContour = -1;
+    int    lastSecondRole = -1;
+    int    lastSecondOffset = -1;
+    int    lastSecondInterval = -1;
+    int    lastSecondOctave = -99;
+    float  lastSecondLevel = -1.0f;
     std::atomic<bool> pendingPoolClear { false };
 
     // RANDOM publishes the pool it wants; the audio thread applies it at the top
