@@ -1200,6 +1200,9 @@ int main()
     // --- (1g5) filter controls and their place in the layout ------------------
     // The UI order follows the signal: VOICE, SECOND VOICE, FILTER, OUTPUT.
     // KEY and VELO have to exist as knobs, and RANDOM must keep them in range.
+    // The filter and the mixer share the two right-hand columns: the filter takes
+    // the top, and OUTPUT + its three toggles form one strip underneath, spanning
+    // the same width.
     {
         VesperaAudioProcessor proc;
         proc.setPlayConfigDetails (0, 2, 48000.0, 512);
@@ -1212,6 +1215,10 @@ int main()
         juce::Slider* cutoffKnob = nullptr;
         juce::Slider* keyKnob = nullptr;
         juce::Slider* velKnob = nullptr;
+        juce::Slider* outputKnob = nullptr;
+        juce::Button* limiter = nullptr;
+        juce::Button* chords = nullptr;
+        juce::Button* playSync = nullptr;
 
         std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
         {
@@ -1229,6 +1236,15 @@ int main()
                         keyKnob = s;
                     if (tip.startsWith ("VELO - velocity into cutoff"))
                         velKnob = s;
+                    if (tip.startsWith ("OUTPUT - output level"))
+                        outputKnob = s;
+                }
+
+                if (auto* b = dynamic_cast<juce::Button*> (child))
+                {
+                    if (b->getButtonText() == "Limiter")   limiter = b;
+                    if (b->getButtonText() == "Chords")    chords = b;
+                    if (b->getButtonText() == "Play Sync") playSync = b;
                 }
 
                 walk (*child);
@@ -1246,6 +1262,35 @@ int main()
                           && keyKnob->getBounds().getWidth() > 10
                           && velKnob->getBounds().getWidth() > 10;
 
+        // OUTPUT lives under the filter: its knob and the three toggles start
+        // below every filter knob, and the button row reaches the right edge of
+        // the window instead of being stacked in a half-empty column.
+        const bool mixerFound = outputKnob != nullptr && limiter != nullptr
+                             && chords != nullptr && playSync != nullptr;
+
+        // VELO is the last knob of the filter grid, so its bottom is the lowest
+        // point the OUTPUT strip has to clear.
+        const int filterBottom = velKnob != nullptr ? velKnob->getBounds().getBottom() : 0;
+
+        auto sameRow = [] (const juce::Rectangle<int>& a, const juce::Rectangle<int>& b)
+        {
+            return juce::jmax (a.getY(), b.getY()) - juce::jmin (a.getY(), b.getY()) < 4;
+        };
+
+        const bool mixerBelow = mixerFound && filterBottom > 0
+                             && outputKnob->getBounds().getY() >= filterBottom
+                             && limiter->getBounds().getY() >= filterBottom;
+
+        const bool mixerOneRow = mixerFound
+                              && sameRow (limiter->getBounds(), chords->getBounds())
+                              && sameRow (chords->getBounds(), playSync->getBounds())
+                              && limiter->getBounds().getX() < chords->getBounds().getX()
+                              && chords->getBounds().getX() < playSync->getBounds().getX();
+
+        const bool mixerWide = mixerFound
+                            && playSync->getBounds().getRight() > editor->getWidth() - 60
+                            && playSync->getBounds().getWidth() > 40;
+
         proc.randomizeParameters();
 
         const float key = getParam (proc, "filterKey");
@@ -1256,10 +1301,14 @@ int main()
 
         std::cout << "filter ui: found=" << found
                   << " ordered=" << ordered
+                  << " mixerFound=" << mixerFound
+                  << " mixerBelow=" << mixerBelow
+                  << " mixerOneRow=" << mixerOneRow
+                  << " mixerWide=" << mixerWide
                   << " randomKey=" << key
                   << " randomVel=" << vel << std::endl;
 
-        if (! (found && ordered && randomised))
+        if (! (found && ordered && mixerBelow && mixerOneRow && mixerWide && randomised))
         {
             ++failures;
             std::cout << "FAIL: filter controls are missing, misordered or out of range"
@@ -1737,6 +1786,7 @@ int main()
     }
 
     // --- (7b) Chords checkbox lives in OUTPUT next to Limiter / Play Sync ----
+    // The three toggles share one row in the strip under the filter.
     {
         VesperaAudioProcessor proc;
         proc.setPlayConfigDetails (0, 2, 48000.0, 512);
@@ -1774,13 +1824,18 @@ int main()
             const auto lim = limiterButton->getBounds();
             const auto sync = playSyncButton->getBounds();
 
+            auto sameRow = [] (const juce::Rectangle<int>& a, const juce::Rectangle<int>& b)
+            {
+                return juce::jmax (a.getY(), b.getY()) - juce::jmin (a.getY(), b.getY()) < 4;
+            };
+
             placed = chordsButton->isVisible()
                   && r.getWidth() > 20 && r.getHeight() > 12
-                  && r.getY() > lim.getBottom()
-                  && r.getY() < sync.getY()
+                  && r.getX() > lim.getRight()
+                  && r.getX() < sync.getX()
+                  && sameRow (r, lim) && sameRow (r, sync)
                   && ! r.intersects (lim)
-                  && ! r.intersects (sync)
-                  && r.getX() >= lim.getX();
+                  && ! r.intersects (sync);
 
             const bool offByDefault = ! chordsButton->getToggleState();
             chordsButton->setToggleState (true, juce::sendNotificationSync);

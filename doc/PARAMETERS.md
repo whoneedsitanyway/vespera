@@ -333,6 +333,11 @@ Wow, Fold, Ring). Они перцептивно перекрывались: ни
   справа — `RANDOM`, `COMPACT`, `MIDI`. В шапке справа — версия плагина
   (`v1.0.0`).
 - **COMPACT / FULL** — скрывает `PatternDisplay`, окно 1280×820 → 1280×600.
+- **Раскладка** — слева направо по сигналу: NOTES, PATTERN, VOICE,
+  SECOND VOICE, затем FILTER. FILTER и OUTPUT делят две правые колонки:
+  фильтр занимает всю ширину сверху (TYPE и LFO в одной строке, RATE рядом с
+  DIVISION/SYNC, шесть ручек в 3×2), а OUTPUT — полоса под ним на той же
+  ширине: ручка OUTPUT слева, `Limiter` / `Chords` / `Play Sync` в один ряд.
 - **MIDI** — кнопка-драг: записывает текущий паттерн в Standard MIDI File
   и начинает drag, чтобы её можно было бросить прямо в дорожку секвенсора.
   Одиночный клик — показать файл в Finder.
@@ -356,7 +361,7 @@ Wow, Fold, Ring). Они перцептивно перекрывались: ни
 
 ### Заводские (factory) пресеты
 
-Вшиты в бинарь (`Source/FactoryPresets.h`), версия 8, всегда доступны:
+Вшиты в бинарь (`Source/FactoryPresets.h`), версия 11, всегда доступны:
 
 `First Light`, `Rain Arp`, `Broken Music Box`, `Deep Pulse`,
 `Glass Steps`, `Tape Lullaby`, `Acid Walk`, `Frozen Motif`.

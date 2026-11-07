@@ -139,6 +139,10 @@ private:
     static constexpr int kFullHeight    = 820;
     static constexpr int kCompactHeight = 600;
 
+    // The OUTPUT strip sits under the FILTER section and spans both of the
+    // right-hand columns, so the filter gets the room it needs.
+    static constexpr int kOutputStripHeight = 118;
+
     juce::Rectangle<int> enclosure;
     juce::Rectangle<int> notesArea, patternArea, voiceArea, secondArea, filterArea, outArea;
     juce::Rectangle<int> displayArea;

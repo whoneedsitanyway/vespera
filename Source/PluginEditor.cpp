@@ -646,12 +646,15 @@ void VesperaAudioProcessorEditor::resized()
     voiceArea = inner.removeFromLeft (colW);
     inner.removeFromLeft (gap);
     // Signal order, left to right: one voice, then the duet that plays with it,
-    // then the filter both of them run through, then the mixer.
+    // then the filter both of them run through.  The mixer shares the last two
+    // columns with the filter: the filter was by far the densest section, so it
+    // takes the full width on top, and OUTPUT becomes one strip underneath it.
     secondArea = inner.removeFromLeft (colW);
     inner.removeFromLeft (gap);
-    filterArea = inner.removeFromLeft (colW);
-    inner.removeFromLeft (gap);
-    outArea = inner;
+
+    auto rightArea = inner;
+    outArea = rightArea.removeFromBottom (kOutputStripHeight);
+    filterArea = rightArea;
 
     auto placeCombo = [] (Combo& c, juce::Rectangle<int>& col)
     {
@@ -739,40 +742,59 @@ void VesperaAudioProcessorEditor::resized()
     {
         auto col = filterArea.reduced (10, 8);
         col.removeFromTop (20);
-        placeCombo (filterTypeCombo, col);
-        placeCombo (filterShapeCombo, col);
 
-        // RATE knob (Hz) and, below it, the DIVISION combo next to the SYNC
-        // toggle: the knob is dimmed while Sync locks the LFO to the tempo.
-        auto knobArea = col.removeFromTop (juce::jlimit (60, 120, col.getHeight() - 190));
-        placeGrid ({ &lfoRateHz }, knobArea, 1);
+        // TYPE and LFO share the first row now that the section is two columns
+        // wide: the combos no longer eat a whole line each.
+        {
+            auto comboRow = col.removeFromTop (38);
+            auto typeCell = comboRow.removeFromLeft ((comboRow.getWidth() - 12) / 2);
+            comboRow.removeFromLeft (12);
+            placeCombo (filterTypeCombo, typeCell);
+            placeCombo (filterShapeCombo, comboRow);
+        }
 
-        col.removeFromTop (4);
-        auto divLabel = col.removeFromTop (14);
-        filterRateCombo.label.setBounds (divLabel);
+        // RATE on the left, DIVISION + SYNC on the right: the knob is dimmed
+        // while Sync locks the LFO to the tempo.
+        {
+            auto lfoRow = col.removeFromTop (juce::jlimit (76, 100, col.getHeight() - 160));
 
-        auto syncRow = col.removeFromTop (30);
-        lfoSyncButton.setBounds (syncRow.removeFromRight (60));
-        syncRow.removeFromRight (8);
-        filterRateCombo.box.setBounds (syncRow);
+            auto rateCell = lfoRow.removeFromLeft (110);
+            placeGrid ({ &lfoRateHz }, rateCell, 1);
 
-        col.removeFromTop (6);
-        placeGrid ({ &cutoff, &filterReso, &filterEnv, &motion,
-                     &filterKey, &filterVel }, col, 2);
+            lfoRow.removeFromLeft (10);
+            filterRateCombo.label.setBounds (lfoRow.removeFromTop (14));
+
+            auto syncRow = lfoRow.removeFromTop (30);
+            filterRateCombo.box.setBounds (
+                syncRow.removeFromLeft (juce::jmax (60, syncRow.getWidth() - 76)));
+            syncRow.removeFromLeft (8);
+            lfoSyncButton.setBounds (syncRow.removeFromTop (26));
+        }
+
+        col.removeFromTop (8);
+        placeGrid ({ &cutoff, &filterReso, &filterEnv,
+                     &motion, &filterKey, &filterVel }, col, 3);
     }
 
     // OUTPUT
     {
+        // A single strip under the filter: OUTPUT on the left, the three output
+        // toggles in one row next to it, spanning the whole width.
         auto col = outArea.reduced (10, 8);
         col.removeFromTop (20);
-        auto bottom = col.removeFromBottom (26 * 3 + 8 * 2);
-        col.removeFromBottom (8);   // small gap above the checkboxes
-        placeGrid ({ &output }, col, 1);
-        limiterButton.setBounds (bottom.removeFromTop (26));
-        bottom.removeFromTop (8);
-        chordsButton.setBounds (bottom.removeFromTop (26));
-        bottom.removeFromTop (8);
-        playSyncButton.setBounds (bottom.removeFromTop (26));
+
+        auto knobCell = col.removeFromLeft (110);
+        placeGrid ({ &output }, knobCell, 1);
+
+        col.removeFromLeft (12);
+
+        auto buttonRow = col.withSizeKeepingCentre (col.getWidth(), 26);
+        const int bw = (buttonRow.getWidth() - 16) / 3;
+        limiterButton.setBounds (buttonRow.removeFromLeft (bw));
+        buttonRow.removeFromLeft (8);
+        chordsButton.setBounds (buttonRow.removeFromLeft (bw));
+        buttonRow.removeFromLeft (8);
+        playSyncButton.setBounds (buttonRow.removeFromLeft (bw));
     }
 
     updateLfoRateUi();

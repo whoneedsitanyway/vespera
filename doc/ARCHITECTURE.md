@@ -267,7 +267,9 @@ NotePool (16 слотов, FIFO) ── PatternEngine (до 16 шагов) ─�
   - хедер: слева — окошко пресетов + иконки Save / темы / LOG;
     справа — RANDOM / COMPACT / MIDI (drag-кнопка экспорта).
   - секции слева направо по сигналу: NOTES / PATTERN / VOICE / SECOND VOICE /
-    FILTER / OUTPUT.
+    FILTER. FILTER и OUTPUT делят две правые колонки: фильтр (самая плотная
+    секция) занимает всю ширину сверху, а OUTPUT — полоса под ним той же ширины
+    (ручка OUTPUT слева, `Limiter` / `Chords` / `Play Sync` в один ряд справа).
   - внизу: `PatternDisplay` — визуализация пула, шагов и playhead.
   - **COMPACT** скрывает дисплей и уменьшает окно (1280×820 → 1280×600).
   - **LFO Sync** приглушает и отключает ручку RATE (как SYNC/TIME в Lunara).
