@@ -1606,6 +1606,10 @@ int main()
 
         juce::Slider* rateKnob = nullptr;
         juce::Button* syncButton = nullptr;
+        juce::ComboBox* typeCombo = nullptr;
+        juce::ComboBox* shapeCombo = nullptr;
+        juce::ComboBox* divisionCombo = nullptr;
+
         std::function<void (juce::Component&)> walk = [&] (juce::Component& c)
         {
             for (auto* child : c.getChildren())
@@ -1617,6 +1621,15 @@ int main()
                 if (auto* b = dynamic_cast<juce::Button*> (child))
                     if (b->getButtonText() == "Sync")
                         syncButton = b;
+
+                if (auto* box = dynamic_cast<juce::ComboBox*> (child))
+                {
+                    const auto tip = box->getTooltip();
+
+                    if (tip.startsWith ("TYPE - filter type"))       typeCombo = box;
+                    if (tip.startsWith ("LFO - modulation"))         shapeCombo = box;
+                    if (tip.startsWith ("DIVISION - LFO speed"))     divisionCombo = box;
+                }
 
                 walk (*child);
             }
@@ -1647,15 +1660,43 @@ int main()
                           && syncButton->getBounds().getWidth() >= 20
                           && ! rateKnob->getBounds().intersects (syncButton->getBounds());
 
+        // Left column: TYPE / LFO / DIVISION stacked.  Right column: RATE with
+        // SYNC under it, to the right of the choices.
+        const bool combosFound = typeCombo != nullptr && shapeCombo != nullptr
+                              && divisionCombo != nullptr;
+
+        auto sameColumn = [] (const juce::Component& a, const juce::Component& b)
+        {
+            return std::abs (a.getX() - b.getX()) <= 2;
+        };
+
+        const bool stackedChoices = combosFound
+                                 && sameColumn (*typeCombo, *shapeCombo)
+                                 && sameColumn (*shapeCombo, *divisionCombo)
+                                 && typeCombo->getY() < shapeCombo->getY()
+                                 && shapeCombo->getY() < divisionCombo->getY()
+                                 && ! typeCombo->getBounds().intersects (shapeCombo->getBounds())
+                                 && ! shapeCombo->getBounds().intersects (divisionCombo->getBounds());
+
+        const bool speedOnTheRight = combosFound && foundControls
+                                  && rateKnob->getX() > divisionCombo->getRight()
+                                  && syncButton->getX() >= rateKnob->getX() - 8
+                                  && syncButton->getY() > rateKnob->getBounds().getBottom()
+                                  && ! syncButton->getBounds().intersects (divisionCombo->getBounds());
+
         std::cout << "filter sync: freeDefault=" << freeByDefault
                   << " found=" << foundControls
                   << " activeFree=" << knobActiveInFree
                   << " lockedSync=" << knobLockedInSync
                   << " backFree=" << knobBackInFree
-                  << " laidOut=" << laidOut << std::endl;
+                  << " laidOut=" << laidOut
+                  << " combos=" << combosFound
+                  << " stacked=" << stackedChoices
+                  << " speedRight=" << speedOnTheRight << std::endl;
 
         if (! (freeByDefault && foundControls && knobActiveInFree
-               && knobLockedInSync && knobBackInFree && laidOut))
+               && knobLockedInSync && knobBackInFree && laidOut
+               && stackedChoices && speedOnTheRight))
         {
             ++failures;
             std::cout << "FAIL: filter SYNC does not lock the RATE knob" << std::endl;

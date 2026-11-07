@@ -743,32 +743,25 @@ void VesperaAudioProcessorEditor::resized()
         auto col = filterArea.reduced (10, 8);
         col.removeFromTop (20);
 
-        // TYPE and LFO share the first row now that the section is two columns
-        // wide: the combos no longer eat a whole line each.
+        // Two columns: the mode choices (TYPE / LFO / DIVISION) stacked on the
+        // left, the LFO speed (RATE with SYNC underneath) on the right.
         {
-            auto comboRow = col.removeFromTop (38);
-            auto typeCell = comboRow.removeFromLeft ((comboRow.getWidth() - 12) / 2);
-            comboRow.removeFromLeft (12);
-            placeCombo (filterTypeCombo, typeCell);
-            placeCombo (filterShapeCombo, comboRow);
-        }
+            auto topBlock = col.removeFromTop (132);
+            auto choiceCol = topBlock.removeFromLeft ((topBlock.getWidth() - 12) / 2);
+            topBlock.removeFromLeft (12);
+            auto speedCol = topBlock;
 
-        // RATE on the left, DIVISION + SYNC on the right: the knob is dimmed
-        // while Sync locks the LFO to the tempo.
-        {
-            auto lfoRow = col.removeFromTop (juce::jlimit (76, 100, col.getHeight() - 160));
+            placeCombo (filterTypeCombo, choiceCol);
+            placeCombo (filterShapeCombo, choiceCol);
+            placeCombo (filterRateCombo, choiceCol);
 
-            auto rateCell = lfoRow.removeFromLeft (110);
+            // RATE keeps the upper part of its column; SYNC sits under it and is
+            // the toggle that dims the knob while the LFO follows the tempo.
+            auto rateCell = speedCol.removeFromTop (juce::jmax (72, speedCol.getHeight() - 34));
             placeGrid ({ &lfoRateHz }, rateCell, 1);
 
-            lfoRow.removeFromLeft (10);
-            filterRateCombo.label.setBounds (lfoRow.removeFromTop (14));
-
-            auto syncRow = lfoRow.removeFromTop (30);
-            filterRateCombo.box.setBounds (
-                syncRow.removeFromLeft (juce::jmax (60, syncRow.getWidth() - 76)));
-            syncRow.removeFromLeft (8);
-            lfoSyncButton.setBounds (syncRow.removeFromTop (26));
+            speedCol.removeFromTop (8);
+            lfoSyncButton.setBounds (speedCol.removeFromTop (26).reduced (6, 0));
         }
 
         col.removeFromTop (8);
@@ -779,9 +772,11 @@ void VesperaAudioProcessorEditor::resized()
     // OUTPUT
     {
         // A single strip under the filter: OUTPUT on the left, the three output
-        // toggles in one row next to it, spanning the whole width.
+        // toggles in one row next to it, spanning the whole width.  The extra
+        // space above the knob clears the section rule, so the control does not
+        // look glued to the line.
         auto col = outArea.reduced (10, 8);
-        col.removeFromTop (20);
+        col.removeFromTop (30);
 
         auto knobCell = col.removeFromLeft (110);
         placeGrid ({ &output }, knobCell, 1);
