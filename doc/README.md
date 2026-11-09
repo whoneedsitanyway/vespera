@@ -68,6 +68,7 @@ cmake --build build --config Release
 - [PARAMETERS.md](PARAMETERS.md) — все параметры, режимы и деления синка.
 - [DEVELOPMENT.md](DEVELOPMENT.md) — тулчейн, сборка, как добавить параметр.
 - [ROADMAP.md](ROADMAP.md) — что сделано и что дальше.
+- [MIDI_OUTPUT.md](MIDI_OUTPUT.md) — план живого MIDI-выхода (не реализовано).
 
 ## Лицензия / происхождение
 

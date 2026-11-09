@@ -7,6 +7,23 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
 
 # -----------------------------------------------------------------------------
+# Apple linker (ld-prime) workaround
+#
+# The macOS 27 (Tahoe) linker refuses to LTO-link JUCE's static *_SharedCode
+# archive unless the target triple is passed explicitly on the link line.
+# We derive the triple from the configured arch + deployment target so it keeps
+# working for both arm64 and x86_64.
+# -----------------------------------------------------------------------------
+if (APPLE)
+    if (CMAKE_OSX_ARCHITECTURES)
+        list(GET CMAKE_OSX_ARCHITECTURES 0 VESPERA_OSX_ARCH)
+    else()
+        set(VESPERA_OSX_ARCH "${CMAKE_SYSTEM_PROCESSOR}")
+    endif()
+    add_link_options("-target" "${VESPERA_OSX_ARCH}-apple-macosx${CMAKE_OSX_DEPLOYMENT_TARGET}")
+endif()
+
+# -----------------------------------------------------------------------------
 # JUCE
 #
 # By default JUCE is fetched into the build tree, so the project is fully
